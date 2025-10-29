@@ -76,3 +76,7 @@ MANIFEST
 select_compute_arch_laptop.cmake
 cmake-build-debug
 .vscode
+
+# IGNORE the ._
+._*
+**/._*

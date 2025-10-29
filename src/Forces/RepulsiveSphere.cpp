@@ -47,27 +47,46 @@ std::tuple<std::vector<int>, std::string> RepulsiveSphere::init(input_file &inp)
 }
 
 LR_vector RepulsiveSphere::value(llint step, LR_vector &pos) {
-	LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
-	number mdist = dist.module();
-	number radius = _r0 + _rate * (number) step;
-        double sigma = 0.5;
+    // Vector from center to particle
+    LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
+    number d = dist.module(); // distance from tip center
 
-	if(mdist <= radius || mdist >= _r_ext) return LR_vector(0., 0., 0.);
-        else return dist * (_stiff * exp(-pow((mdist - radius), 2) / (2 * pow(sigma, 2))));
+    // Current tip radius (can move/grow with time)
+    number R = _r0 + _rate * (number) step;
 
+    // No force if we're outside (or exactly on) the tip surface
+    if (d >= R || d <= 0.0) {
+        return LR_vector(0., 0., 0.);
+    }
+
+    // penetration fraction x in [0,1] for d in [R,0]
+    number x = 1.0 - d / R; // how far "inside" the tip you are
+
+    // cubic penalty with zero slope at boundary:
+    // U = K * x^3  =>  F_mag = (3K/R) * x^2
+    number K = _stiff;  // rename conceptually
+    number F_mag = (3.0 * K / R) * x * x;
+
+    // Direction: outward from center (repulsive core)
+    LR_vector dir = dist * (1.0 / d);
+
+    return dir * F_mag;
 }
 
 number RepulsiveSphere::potential(llint step, LR_vector &pos) {
     LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
-    number mdist = dist.module();
-    number radius = _r0 + _rate * (number) step;
-    number sigma = 0.5;  // nm
+    number d = dist.module();
 
-    if(mdist <= radius || mdist >= _r_ext)
-        return 0.;
+    number R = _r0 + _rate * (number) step;
 
-    number term1 = -_stiff * (-pow(sigma, 2) * exp(-pow((mdist - radius), 2) / (2 * pow(sigma, 2))));
-    number term2 = -_stiff * (radius * sigma * sqrt(M_PI / 2.0) * erf((mdist - radius) / (sqrt(2.0) * sigma)));
-    return term1 + term2;
+    if (d >= R || d <= 0.0) {
+        return 0.0;
+    }
+
+    number x = 1.0 - d / R;
+    number K = _stiff;
+
+    // U = K * x^3, continuous and 0 at boundary
+    number U = K * x * x * x;
+    return U;
 }
-
