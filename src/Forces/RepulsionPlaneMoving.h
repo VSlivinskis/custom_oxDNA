@@ -37,6 +37,11 @@ class RepulsionPlaneMoving: public BaseForce {
 private:
 	std::string _particles_string;
 	std::string _ref_particles_string;
+    bool _use_ref = false;           // true if using ref_particle path
+    LR_vector _origin;               // starting point of plane when not using refs
+   LR_vector _target;               // target point to move toward
+   LR_vector _plane_point;          // current point on the plane (anchor)
+   llint _move_steps = 0;           // steps to reach target (0 => static at _origin)
 
 public:
 	std::vector<BaseParticle *> ref_p_ptr;
@@ -47,6 +52,9 @@ public:
 	}
 
 	std::tuple<std::vector<int>, std::string> init(input_file &inp) override;
+
+   // Recompute plane anchor for this step (from refs or linear interpolation)
+   inline void update_plane_point(llint step);
 
 	virtual LR_vector value(llint step, LR_vector &pos);
 	virtual number potential(llint step, LR_vector &pos);

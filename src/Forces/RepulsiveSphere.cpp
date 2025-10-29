@@ -2,7 +2,7 @@
  * RepulsiveSphere.cpp
  *
  *  Created on: 28/nov/2014
- *      Author: Flavio 
+ *      Author: Flavio
  */
 
 #include "RepulsiveSphere.h"
@@ -20,6 +20,9 @@ RepulsiveSphere::RepulsiveSphere() :
 
 std::tuple<std::vector<int>, std::string> RepulsiveSphere::init(input_file &inp) {
 	BaseForce::init(inp);
+
+	std::cerr << "[DEBUG] RepulsiveSphere::init() called from "
+          << __FILE__ << ":" << __LINE__ << " in " << __func__ << std::endl;
 
 	getInputNumber(&inp, "stiff", &_stiff, 1);
 	getInputNumber(&inp, "r0", &_r0, 1);
@@ -47,16 +50,24 @@ LR_vector RepulsiveSphere::value(llint step, LR_vector &pos) {
 	LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
 	number mdist = dist.module();
 	number radius = _r0 + _rate * (number) step;
+        double sigma = 0.5;
 
 	if(mdist <= radius || mdist >= _r_ext) return LR_vector(0., 0., 0.);
-	else return dist * (-_stiff * (1. - radius / mdist));
+        else return dist * (_stiff * exp(-pow((mdist - radius), 2) / (2 * pow(sigma, 2))));
+
 }
 
 number RepulsiveSphere::potential(llint step, LR_vector &pos) {
-	LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
-	number mdist = dist.module();
-	number radius = _r0 + _rate * (number) step;
+    LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
+    number mdist = dist.module();
+    number radius = _r0 + _rate * (number) step;
+    number sigma = 0.5;  // nm
 
-	if(mdist <= radius || mdist >= _r_ext) return 0.;
-	else return 0.5 * _stiff * (mdist - radius) * (mdist - radius);
+    if(mdist <= radius || mdist >= _r_ext)
+        return 0.;
+
+    number term1 = -_stiff * (-pow(sigma, 2) * exp(-pow((mdist - radius), 2) / (2 * pow(sigma, 2))));
+    number term2 = -_stiff * (radius * sigma * sqrt(M_PI / 2.0) * erf((mdist - radius) / (sqrt(2.0) * sigma)));
+    return term1 + term2;
 }
+

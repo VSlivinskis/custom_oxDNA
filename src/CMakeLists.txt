@@ -155,6 +155,7 @@ SET(forces_SOURCES
 	Forces/RepulsionPlane.cpp
 	Forces/RepulsionPlaneMoving.cpp
 	Forces/RepulsiveSphere.cpp
+	Forces/RepulsiveSphereMoving.cpp
 	Forces/RepulsiveSphereSmooth.cpp
 	Forces/LJWall.cpp
 	Forces/HardWall.cpp
@@ -168,6 +169,7 @@ SET(forces_SOURCES
 	Forces/Metadynamics/LTAtanCOMTrap.cpp
 	Forces/Metadynamics/meta_utils.cpp
 	Forces/AttractionPlane.cpp
+	Forces/AFMMovingSphere.cpp
 
 )
 
