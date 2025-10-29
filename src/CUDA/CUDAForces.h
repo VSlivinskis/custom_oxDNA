@@ -10,6 +10,7 @@
 
 #include "../Forces/COMForce.h"
 #include "../Forces/ConstantRateForce.h"
+// #include "../Forces/SawtoothForce.h"
 #include "../Forces/ConstantRateTorque.h"
 #include "../Forces/ConstantTrap.h"
 #include "../Forces/LowdimMovingTrap.h"
@@ -17,15 +18,19 @@
 #include "../Forces/MutualTrap.h"
 #include "../Forces/RepulsionPlane.h"
 #include "../Forces/RepulsionPlaneMoving.h"
+// #include "../Forces/LJWall.h"
+// #include "../Forces/HardWall.h"
 #include "../Forces/RepulsiveSphere.h"
 #include "../Forces/RepulsiveSphereSmooth.h"
-#include "../Forces/LJWall.h"
+// #include "../Forces/AlignmentField.h"
 #include "../Forces/GenericCentralForce.h"
 #include "../Forces/LJCone.h"
 #include "../Forces/RepulsiveEllipsoid.h"
 #include "../Forces/YukawaSphere.h"
 #include "../Forces/Metadynamics/LTCOMTrap.h"
 #include "../Forces/AttractionPlane.h"
+#include "../Forces/RepulsiveSphereMoving.h"
+#include "../Forces/AFMMovingSphere.h"
 
 #include "CUDAUtils.h"
 
