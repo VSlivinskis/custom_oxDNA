@@ -79,7 +79,7 @@ RepulsiveSphereMoving::init(input_file &inp) {
     getInputString(&inp, "particle", particles_string, 1);
 
     std::string description = Utils::sformat(
-        "RepulsiveSphereMoving (stiff=%g, r0=%g, rate=%g, center=%g,%g,%g; origin=%g,%g,%g -> target=%g,%g,%g; steps=%lld)",
+        "repulsive_sphere_moving (stiff=%g, r0=%g, rate=%g, center=%g,%g,%g; origin=%g,%g,%g -> target=%g,%g,%g; steps=%lld)",
         _stiff, _r0, _rate,
         _center.x, _center.y, _center.z,
         _origin.x, _origin.y, _origin.z,
@@ -88,7 +88,7 @@ RepulsiveSphereMoving::init(input_file &inp) {
     );
 
     auto particle_ids = Utils::get_particles_from_string(
-        CONFIG_INFO->particles(), particles_string, "RepulsiveSphereMoving");
+        CONFIG_INFO->particles(), particles_string, "repulsive_sphere_moving");
 
     return std::make_tuple(particle_ids, description);
 }
