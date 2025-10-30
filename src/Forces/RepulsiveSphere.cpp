@@ -47,46 +47,58 @@ std::tuple<std::vector<int>, std::string> RepulsiveSphere::init(input_file &inp)
 }
 
 LR_vector RepulsiveSphere::value(llint step, LR_vector &pos) {
-    // Vector from center to particle
+    // Vector center -> particle with PBC
     LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
-    number d = dist.module(); // distance from tip center
+    number d = dist.module();
 
-    // Current tip radius (can move/grow with time)
-    number R = _r0 + _rate * (number) step;
-
-    // No force if we're outside (or exactly on) the tip surface
-    if (d >= R || d <= 0.0) {
+    // Desired spherical cutoff radius where U=F=0 (can grow with "rate")
+    const number Rc = _r0 + _rate * (number) step;
+    if (d <= 0.0 || d >= Rc) {
         return LR_vector(0., 0., 0.);
     }
 
-    // penetration fraction x in [0,1] for d in [R,0]
-    number x = 1.0 - d / R; // how far "inside" the tip you are
+    // Map cutoff to WCA sigma: rc = 2^(1/6) * sigma  =>  sigma = Rc / 2^(1/6)
+    static const number two_to_1_over_6 = pow(2.0, 1.0/6.0);
+    const number sigma = Rc / two_to_1_over_6;
 
-    // cubic penalty with zero slope at boundary:
-    // U = K * x^3  =>  F_mag = (3K/R) * x^2
-    number K = _stiff;  // rename conceptually
-    number F_mag = (3.0 * K / R) * x * x;
+    // Precompute powers
+    const number inv_d  = 1.0 / d;
+    const number s_over_d = sigma * inv_d;
+    const number s6 = pow(s_over_d, 6);
+    const number s12 = s6 * s6;
 
-    // Direction: outward from center (repulsive core)
-    LR_vector dir = dist * (1.0 / d);
+    // epsilon from "stiff"
+    const number eps = _stiff;
 
-    return dir * F_mag;
+    // Force magnitude for LJ (same as WCA inside cutoff), outward (repulsive)
+    // F = 24*eps*(2*sigma^12/d^13 - sigma^6/d^7)
+    const number Fmag = 24.0 * eps * (2.0 * s12 - s6) * inv_d;
+
+    // Direction (normalize dist)
+    LR_vector dir = dist * inv_d;
+    return dir * Fmag;
 }
 
 number RepulsiveSphere::potential(llint step, LR_vector &pos) {
     LR_vector dist = CONFIG_INFO->box->min_image(_center, pos);
     number d = dist.module();
 
-    number R = _r0 + _rate * (number) step;
-
-    if (d >= R || d <= 0.0) {
+    const number Rc = _r0 + _rate * (number) step;
+    if (d <= 0.0 || d >= Rc) {
         return 0.0;
     }
 
-    number x = 1.0 - d / R;
-    number K = _stiff;
+    static const number two_to_1_over_6 = pow(2.0, 1.0/6.0);
+    const number sigma = Rc / two_to_1_over_6;
 
-    // U = K * x^3, continuous and 0 at boundary
-    number U = K * x * x * x;
+    const number inv_d  = 1.0 / d;
+    const number s_over_d = sigma * inv_d;
+    const number s6  = pow(s_over_d, 6);
+    const number s12 = s6 * s6;
+
+    const number eps = _stiff;
+
+    // U_LJ shifted so U(Rc)=0: U = 4*eps*(s12 - s6) + eps   (for d < Rc)
+    const number U = 4.0 * eps * (s12 - s6) + eps;
     return U;
 }

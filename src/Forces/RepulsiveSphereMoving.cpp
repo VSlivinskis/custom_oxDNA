@@ -103,28 +103,68 @@ LR_vector RepulsiveSphereMoving::center_for_step(llint step) const {
 }
 
 LR_vector RepulsiveSphereMoving::value(llint step, LR_vector &pos) {
+    // Moving center and sphere radius at this step
     LR_vector c = center_for_step(step);
     LR_vector dist = CONFIG_INFO->box->min_image(c, pos);
-    number mdist = dist.module();
-	number radius = _r0 + _rate * (number) step;
-    double sigma = 0.5;
+    number mdist   = dist.module();
+    number radius  = _r0 + _rate * (number) step;
 
-	if(mdist <= radius || mdist >= _r_ext) return LR_vector(0., 0., 0.);
-        else return dist * (_stiff * exp(-pow((mdist - radius), 2) / (2 * pow(sigma, 2))));
+    // Early exits: outside external cut or missing geometry
+    if (mdist <= 0.0 || mdist >= _r_ext) return LR_vector(0., 0., 0.);
 
+    // Surface gap r = distance from the sphere surface to the particle
+    number r = mdist - radius;
+
+    // WCA parameters
+    const number sigma = 1;
+    const number rc    = std::pow(2.0, 1.0/6.0) * sigma; // cutoff at LJ minimum
+
+    // If the particle is farther than rc from the sphere surface, no force
+    if (r >= rc) return LR_vector(0., 0., 0.);
+
+    // Avoid singularities if r <= 0 (particle "inside" the sphere shell)
+    // Clamp to a tiny positive value; direction remains outward (dist)
+    const number r_safe = (r > 1e-9) ? r : 1e-9;
+
+    // WCA = truncated & shifted LJ => Force magnitude (purely repulsive branch)
+    // F(r) = 24*eps * [ 2*(σ^12)/r^13 - (σ^6)/r^7 ], for r < rc; 0 otherwise.
+    const number eps = _stiff;
+    const number s6  = std::pow(sigma, 6);
+    const number s12 = s6 * s6;
+
+    number Fmag = 24.0 * eps * ( 2.0 * s12 / std::pow(r_safe, 13)
+                               -        s6  / std::pow(r_safe, 7 ) );
+
+    // Direction: from center -> particle (outward normal)
+    LR_vector n = dist / mdist;
+    return n * Fmag;
 }
+
 
 number RepulsiveSphereMoving::potential(llint step, LR_vector &pos) {
     LR_vector c = center_for_step(step);
     LR_vector dist = CONFIG_INFO->box->min_image(c, pos);
-    number mdist = dist.module();
-    number radius = _r0 + _rate * (number) step;
+    number mdist   = dist.module();
+    number radius  = _r0 + _rate * (number) step;
 
-    number sigma = 0.5;  // nm
-    if(mdist <= radius || mdist >= _r_ext)
-        return 0.;
+    if (mdist <= 0.0 || mdist >= _r_ext) return 0.0;
 
-    number term1 = -_stiff * (-pow(sigma, 2) * exp(-pow((mdist - radius), 2) / (2 * pow(sigma, 2))));
-    number term2 = -_stiff * (radius * sigma * sqrt(M_PI / 2.0) * erf((mdist - radius) / (sqrt(2.0) * sigma)));
-    return term1 + term2;
+    // Surface gap
+    number r = mdist - radius;
+
+    const number sigma = 1;
+    const number rc    = std::pow(2.0, 1.0/6.0) * sigma;
+
+    if (r >= rc) return 0.0;
+
+    // Clamp r to avoid singularity at 0
+    const number r_safe = (r > 1e-9) ? r : 1e-9;
+
+    // WCA potential: U(r) = 4ε[(σ/r)^12 - (σ/r)^6] + ε, for r < rc ; 0 otherwise.
+    const number eps = _stiff;
+    const number sr  = sigma / r_safe;
+    const number sr6 = std::pow(sr, 6);
+
+    number U = 4.0 * eps * (sr6*sr6 - sr6) + eps;
+    return U;
 }
