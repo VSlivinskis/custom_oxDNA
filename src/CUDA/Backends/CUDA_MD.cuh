@@ -246,7 +246,57 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 
 				break;
 			}
+			// case CUDA_AFM_MOVING_SPHERE: {
 
+			// 	const afm_moving_sphere &afm = trap.afmmovingsphere;
+
+			// 	// 1) Scripted center_for_step(step)
+			// 	c_number t = (afm.steps > 0)
+			// 			? (c_number)step / (c_number)afm.steps
+			// 			: (c_number)0.0;
+			// 	if (t < (c_number)0.0) t = (c_number)0.0;
+			// 	if (t > (c_number)1.0) t = (c_number)1.0;
+
+			// 	float3 center;
+			// 	center.x = afm.origin.x + (afm.target.x - afm.origin.x) * t;
+			// 	center.y = afm.origin.y + (afm.target.y - afm.origin.y) * t;
+			// 	center.z = afm.origin.z + (afm.target.z - afm.origin.z) * t;
+
+			// 	// 2) Minimum-image vector from tip center to particle
+			// 	// You already have a helper for this in the repulsive-sphere case;
+			// 	// reuse the same pattern. Example (adapt names to your code):
+			// 	LR_vector c_vec(center.x, center.y, center.z);
+			// 	LR_vector r_vec = box->min_image(pos[i], c_vec);  // or min_image(c_vec, pos[i]) depending on convention
+			// 	c_number mdist  = r_vec.module();
+
+			// 	// 3) Radius and overlap at this step
+			// 	c_number radius  = afm.r0 + afm.rate * (c_number)step;
+			// 	c_number overlap = radius - mdist;
+
+			// 	LR_vector fi((c_number)0.0, (c_number)0.0, (c_number)0.0);
+
+			// 	// 4A) Contact: inside the tip
+			// 	if (overlap > (c_number)0.0) {
+			// 		LR_vector n_hat = r_vec / (mdist + (c_number)1e-12);
+			// 		c_number fmag   = afm.stiff * overlap;
+			// 		fi = n_hat * fmag;
+
+			// 	// 4B) Gaussian halo, if within r_ext
+			// 	} else if (mdist < afm.r_ext) {
+			// 		c_number gap   = -overlap;            // = mdist - radius
+			// 		c_number sigma = (c_number)0.5;       // same as in AFMMovingSphere::value/potential
+			// 		c_number fmag  = afm.stiff * exp( - (gap * gap) / ( (c_number)2.0 * sigma * sigma ) );
+			// 		LR_vector n_hat = r_vec / (mdist + (c_number)1e-12);
+			// 		fi = n_hat * fmag;
+			// 	}
+
+			// 	// 5) Add to the particle force
+			// 	f[i].x += fi.x;
+			// 	f[i].y += fi.y;
+			// 	f[i].z += fi.z;
+
+			// 	break;
+			// }
 			case CUDA_REPULSIVE_SPHERE_SMOOTH: {
 				c_number4 centre = make_c_number4(extF.repulsivespheresmooth.centre.x, extF.repulsivespheresmooth.centre.y, extF.repulsivespheresmooth.centre.z, 0.);
 				c_number4 dist = box->minimum_image(centre, ppos);
@@ -368,106 +418,84 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 				}
 				break;
 			}
-			case CUDA_REPULSIVE_ELLIPSOID: {
-				c_number4 centre = make_c_number4(extF.repulsiveellipsoid.centre.x, extF.repulsiveellipsoid.centre.y, extF.repulsiveellipsoid.centre.z, 0.);
-				c_number4 r_1 = make_c_number4(extF.repulsiveellipsoid.r_1.x, extF.repulsiveellipsoid.r_1.y, extF.repulsiveellipsoid.r_1.z, 0.);
-				c_number4 r_2 = make_c_number4(extF.repulsiveellipsoid.r_2.x, extF.repulsiveellipsoid.r_2.y, extF.repulsiveellipsoid.r_2.z, 0.);
+			case CUDA_REPULSIVE_ELLIPSOID:
+			{
+				// Take parameters from this external force
+				const repulsive_ellipsoid &f = extF.repulsiveellipsoid;
+
+				// Center of ellipsoid as c_number4 (for minimum_image)
+				c_number4 centre = make_c_number4(
+					(c_number)f.centre.x,
+					(c_number)f.centre.y,
+					(c_number)f.centre.z,
+					(c_number)0.0
+				);
+
+				// Semi-axes (outer ellipsoid) – we ignore r_1 to mimic the sphere logic
+				const c_number ax = (c_number)f.r_2.x;
+				const c_number ay = (c_number)f.r_2.y;
+				const c_number az = (c_number)f.r_2.z;
+
+				// Minimum-image vector centre -> particle
 				c_number4 dist = box->minimum_image(centre, ppos);
+				c_number dx = dist.x;
+				c_number dy = dist.y;
+				c_number dz = dist.z;
 
-				c_number internal_cut = SQR(dist.x) / SQR(r_2.x) + SQR(dist.y) / SQR(r_2.y) + SQR(dist.z) / SQR(r_2.z);
-				c_number external_cut = SQR(dist.x) / SQR(r_1.x) + SQR(dist.y) / SQR(r_1.y) + SQR(dist.z) / SQR(r_1.z);
+				// Ellipsoidal scaled distance: d = sqrt((x/ax)^2 + (y/ay)^2 + (z/az)^2)
+				c_number sx = dx / ax;
+				c_number sy = dy / ay;
+				c_number sz = dz / az;
 
-				if(internal_cut >= 1. || external_cut <= 1.) {
-					c_number mdist = _module(dist);
-
-					c_number force_part = extF.repulsiveellipsoid.stiff / mdist;
-
-					F.x += -dist.x * force_part;
-					F.y += -dist.y * force_part;
-					F.z += -dist.z * force_part;
+				c_number d2 = sx*sx + sy*sy + sz*sz;
+				if (d2 <= (c_number)0.0) {
+					break;
 				}
 
-				c_number mdist = _module(dist);
-				c_number radius = extF.repulsivesphere.r0 + extF.repulsivesphere.rate*(c_number) step;
-				c_number radius_ext = extF.repulsivesphere.r_ext;
-				if(mdist > radius && mdist < radius_ext) {
-					c_number force_mod = extF.repulsivesphere.stiff*((c_number)1.f - radius/mdist);
-					F.x += -dist.x*force_mod;
-					F.y += -dist.y*force_mod;
-					F.z += -dist.z*force_mod;
+				c_number d = sqrt(d2);
+
+				// Cutoff in ellipsoidal space (analog of Rc for the sphere)
+				const c_number Rc = (c_number)1.0;
+
+				// Only apply WCA inside the ellipsoid (d < 1)
+				if (d >= Rc) {
+					break;
 				}
+
+				// ===== WCA / LJ 6–12 in terms of ellipsoidal radius d =====
+				const c_number two_to_1_over_6 = pow((c_number)2.0, (c_number)(1.0/6.0));
+				const c_number sigma = Rc / two_to_1_over_6;
+
+				const c_number inv_d    = (c_number)1.0 / d;
+				const c_number s_over_d = sigma * inv_d;
+				const c_number s6       = pow(s_over_d, (c_number)6.0);
+				const c_number s12      = s6 * s6;
+
+				const c_number eps  = f.stiff;
+				// Radial WCA magnitude (same functional form as sphere)
+				const c_number Fmag = (c_number)24.0 * eps * ((c_number)2.0 * s12 - s6) * inv_d;
+
+				// Ellipsoidal “normal” direction (gradient of d, then normalized)
+				c_number gx = dx / (ax*ax * d);
+				c_number gy = dy / (ay*ay * d);
+				c_number gz = dz / (az*az * d);
+
+				c_number g2 = gx*gx + gy*gy + gz*gz;
+				if (g2 > (c_number)0.0) {
+					c_number ginv = rsqrt(g2);
+					gx *= ginv;
+					gy *= ginv;
+					gz *= ginv;
+
+					// Add outward repulsive force contribution
+					F.x += (c_number)(Fmag * gx);
+					F.y += (c_number)(Fmag * gy);
+					F.z += (c_number)(Fmag * gz);
+				}
+
 				break;
 			}
-			case CUDA_COM_FORCE: {
-				c_number4 com = make_c_number4(0., 0., 0., 0.);
-				for(int index = 0; index < extF.comforce.n_com; index++){
-					int p_idx = extF.comforce.com_indexes[index];
-					com += poss[p_idx];
-				}
-				com.x /= extF.comforce.n_com;
-				com.y /= extF.comforce.n_com;
-				com.z /= extF.comforce.n_com;
 
-				c_number4 ref = make_c_number4(0., 0., 0., 0.);
-				for(int index = 0; index < extF.comforce.n_ref; index++){
-					int p_idx = extF.comforce.ref_indexes[index];
-					ref += poss[p_idx];
-				}
-				ref.x /= extF.comforce.n_ref;
-				ref.y /= extF.comforce.n_ref;
-				ref.z /= extF.comforce.n_ref;
-
-				c_number4 dr = ref - com;
-				c_number dr_abs = _module(dr);
-				c_number4 force = dr * ((dr_abs - (extF.comforce.r0 + extF.comforce.rate * step)) * extF.comforce.stiff / dr_abs) / extF.comforce.n_com;
-
-				F.x += force.x;
-				F.y += force.y;
-				F.z += force.z;
-
-				break;
-			}
-			case CUDA_LR_COM_TRAP: {
-				c_number4 p1a_vec({0.f, 0.f, 0.f, 0.f});
-				c_number4 p2a_vec({0.f, 0.f, 0.f, 0.f});
-				for(int will = 0; will < extF.ltcomtrap.p1a_size; will++) {
-					p1a_vec.x += poss[extF.ltcomtrap.p1a[will]].x / extF.ltcomtrap.p1a_size;
-					p1a_vec.y += poss[extF.ltcomtrap.p1a[will]].y / extF.ltcomtrap.p1a_size;
-					p1a_vec.z += poss[extF.ltcomtrap.p1a[will]].z / extF.ltcomtrap.p1a_size;
-				}
-
-				for(int will = 0; will < extF.ltcomtrap.p2a_size; will++) {
-					p2a_vec.x += poss[extF.ltcomtrap.p2a[will]].x / extF.ltcomtrap.p2a_size;
-					p2a_vec.y += poss[extF.ltcomtrap.p2a[will]].y / extF.ltcomtrap.p2a_size;
-					p2a_vec.z += poss[extF.ltcomtrap.p2a[will]].z / extF.ltcomtrap.p2a_size;
-				}
-
-				c_number4 dr = p1a_vec - p2a_vec;
-				c_number dr_mod = _module(dr);
-
-				int ix_left = (int) ((dr_mod - extF.ltcomtrap.xmin) / extF.ltcomtrap.dX);
-				int ix_right = ix_left + 1;
-
-				// make sure that we never get out of boundaries. If we are then we keep the force 0
-				c_number meta_Fx = 0.f;
-				if(ix_left >= 0 && ix_right <= (extF.ltcomtrap.N_grid - 1)) {
-					meta_Fx = -(extF.ltcomtrap.potential_grid[ix_right] - extF.ltcomtrap.potential_grid[ix_left]) / extF.ltcomtrap.dX;
-				}
-
-				c_number4 force = (dr) * (meta_Fx / dr_mod);
-
-				if(extF.ltcomtrap.mode == 1) {
-					F.x += force.x / extF.ltcomtrap.p1a_size;
-					F.y += force.y / extF.ltcomtrap.p1a_size;
-					F.z += force.z / extF.ltcomtrap.p1a_size;
-				}
-				else if(extF.ltcomtrap.mode == 2) {
-					F.x -= force.x / extF.ltcomtrap.p2a_size;
-					F.y -= force.y / extF.ltcomtrap.p2a_size;
-					F.z -= force.z / extF.ltcomtrap.p2a_size;
-				}
-				break;
-			}
 			case CUDA_YUKAWA_SPHERE: {
 				c_number4 centre = make_c_number4(extF.yukawasphere.center.x, extF.yukawasphere.center.y, extF.yukawasphere.center.z, 0.);
 
