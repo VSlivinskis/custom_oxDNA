@@ -9,6 +9,7 @@ RepulsiveEllipsoid::RepulsiveEllipsoid() :
 {
     _r_2 = LR_vector(1.,1.,1.);
     _centre = LR_vector(0.,0.,0.);
+	_rate = 0.;
 }
 
 std::tuple<std::vector<int>, std::string> RepulsiveEllipsoid::init(input_file &inp)
@@ -16,6 +17,7 @@ std::tuple<std::vector<int>, std::string> RepulsiveEllipsoid::init(input_file &i
     BaseForce::init(inp);
 
     getInputNumber(&inp, "stiff", &_stiff, 1);
+	getInputNumber(&inp, "rate", &_rate, 0);
 
     std::string strdir;
     double tmpf[3];
@@ -90,10 +92,11 @@ LR_vector RepulsiveEllipsoid::value(llint step, LR_vector &pos)
              SQR(dist.z/_r_2.z));
 
     // the "cutoff" in ellipsoidal space is 1.0
-    const number Rc = 1.0;
-    if(d <= 0.0 || d >= Rc)
-        return LR_vector(0.,0.,0.);
-
+    const number Rc = (number)1.0 + _rate * (number)step;
+	if (Rc <= 0.0) {
+		return LR_vector(0., 0., 0.);   // in value()
+		// or 0.0 in potential()
+	}
     // WCA parameters identical to RepulsiveSphere
     static const number two_to_1_over_6 = pow(2.0, 1.0/6.0);
     number sigma = Rc / two_to_1_over_6;

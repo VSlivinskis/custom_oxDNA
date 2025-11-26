@@ -455,7 +455,10 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 				c_number d = sqrt(d2);
 
 				// Cutoff in ellipsoidal space (analog of Rc for the sphere)
-				const c_number Rc = (c_number)1.0;
+				c_number Rc = (c_number)1.0 + f.rate * (c_number)step;
+				if (Rc <= (c_number)0.0) {
+					break;
+				}
 
 				// Only apply WCA inside the ellipsoid (d < 1)
 				if (d >= Rc) {

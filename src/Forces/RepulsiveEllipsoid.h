@@ -44,6 +44,8 @@ public:
 	/// inner axes: for distances greater than these values particles will not feel any force
 	LR_vector _r_1;
 
+	number _rate;
+
 	RepulsiveEllipsoid();
 	virtual ~RepulsiveEllipsoid() {
 	}

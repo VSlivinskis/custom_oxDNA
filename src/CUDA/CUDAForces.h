@@ -369,6 +369,7 @@ void init_LJCone_from_CPU(LJ_cone *cuda_force, LJCone *cpu_force) {
 struct repulsive_ellipsoid {
 	int type;
 	c_number stiff;
+	c_number rate;   // NEW: growth rate
 	float3 r_1, r_2, centre;
 };
 
