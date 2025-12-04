@@ -420,52 +420,65 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 			}
 			case CUDA_REPULSIVE_ELLIPSOID:
 			{
-				// Take parameters from this external force
 				const repulsive_ellipsoid &f = extF.repulsiveellipsoid;
 
-				// Center of ellipsoid as c_number4 (for minimum_image)
-				c_number4 centre = make_c_number4(
+				// Ellipsoid centre in box coordinates
+				const c_number4 centre = make_c_number4(
 					(c_number)f.centre.x,
 					(c_number)f.centre.y,
 					(c_number)f.centre.z,
 					(c_number)0.0
 				);
 
-				// Semi-axes (outer ellipsoid) – we ignore r_1 to mimic the sphere logic
+				// Semi-axes (a_x, a_y, a_z)
 				const c_number ax = (c_number)f.r_2.x;
 				const c_number ay = (c_number)f.r_2.y;
 				const c_number az = (c_number)f.r_2.z;
 
-				// Minimum-image vector centre -> particle
+				// Minimum-image displacement from centre to particle
 				c_number4 dist = box->minimum_image(centre, ppos);
 				c_number dx = dist.x;
 				c_number dy = dist.y;
 				c_number dz = dist.z;
 
-				// Ellipsoidal scaled distance: d = sqrt((x/ax)^2 + (y/ay)^2 + (z/az)^2)
-				c_number sx = dx / ax;
-				c_number sy = dy / ay;
-				c_number sz = dz / az;
+				// ------------------------------------------------------------
+				// Ellipsoidal "radius" d.  d = 1 corresponds to the geometric
+				// ellipsoid with semi-axes (ax, ay, az).
+				// ------------------------------------------------------------
+				const c_number sx = dx / ax;
+				const c_number sy = dy / ay;
+				const c_number sz = dz / az;
 
-				c_number d2 = sx*sx + sy*sy + sz*sz;
+				const c_number d2 = sx*sx + sy*sy + sz*sz;
 				if (d2 <= (c_number)0.0) {
-					break;
+					break; // at centre; ignore
 				}
+				const c_number d = sqrt(d2);
 
-				c_number d = sqrt(d2);
-
-				// Cutoff in ellipsoidal space (analog of Rc for the sphere)
-				c_number Rc = (c_number)1.0 + f.rate * (c_number)step;
+				// ------------------------------------------------------------
+				// WCA cut-off in ellipsoidal metric:
+				//   Rc = 1 + rate * step
+				//
+				// Force is non-zero in 0 < d < Rc, which automatically includes:
+				//   * 0 < d < 1   : inside the ellipsoid
+				//   * 1 < d < Rc  : outer shell outside the ellipsoid surface
+				//
+				// NOTE: To actually get an outer shell, you need Rc > 1.
+				//       With rate = 0 you get Rc = 1, so only the interior
+				//       feels the force.
+				// ------------------------------------------------------------
+				const c_number Rc = (c_number)1.0 + (c_number)f.rate * (c_number)step;
 				if (Rc <= (c_number)0.0) {
 					break;
 				}
-
-				// Only apply WCA inside the ellipsoid (d < 1)
 				if (d >= Rc) {
-					break;
+					break;      // outside WCA cut-off: no force
 				}
 
-				// ===== WCA / LJ 6–12 in terms of ellipsoidal radius d =====
+				// ------------------------------------------------------------
+				// Standard WCA mapping: Rc = 2^(1/6) * sigma
+				// so sigma = Rc / 2^(1/6)
+				// ------------------------------------------------------------
 				const c_number two_to_1_over_6 = pow((c_number)2.0, (c_number)(1.0/6.0));
 				const c_number sigma = Rc / two_to_1_over_6;
 
@@ -474,26 +487,31 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 				const c_number s6       = pow(s_over_d, (c_number)6.0);
 				const c_number s12      = s6 * s6;
 
-				const c_number eps  = f.stiff;
-				// Radial WCA magnitude (same functional form as sphere)
-				const c_number Fmag = (c_number)24.0 * eps * ((c_number)2.0 * s12 - s6) * inv_d;
+				const c_number eps  = (c_number)f.stiff;
+				const c_number Fmag = (c_number)24.0 * eps *
+									((c_number)2.0 * s12 - s6) *
+									inv_d;   // |F(d)| in the WCA core
 
-				// Ellipsoidal “normal” direction (gradient of d, then normalized)
+				// ------------------------------------------------------------
+				// Ellipsoid normal: gradient of d in lab frame.
+				// This is proportional to (x/a_x^2, y/a_y^2, z/a_z^2),
+				// then normalized.
+				// ------------------------------------------------------------
 				c_number gx = dx / (ax*ax * d);
 				c_number gy = dy / (ay*ay * d);
 				c_number gz = dz / (az*az * d);
 
-				c_number g2 = gx*gx + gy*gy + gz*gz;
+				const c_number g2 = gx*gx + gy*gy + gz*gz;
 				if (g2 > (c_number)0.0) {
-					c_number ginv = rsqrt(g2);
+					const c_number ginv = rsqrt(g2);
 					gx *= ginv;
 					gy *= ginv;
 					gz *= ginv;
 
-					// Add outward repulsive force contribution
-					F.x += (c_number)(Fmag * gx);
-					F.y += (c_number)(Fmag * gy);
-					F.z += (c_number)(Fmag * gz);
+					// Add contribution to total force on the particle
+					F.x += Fmag * gx;
+					F.y += Fmag * gy;
+					F.z += Fmag * gz;
 				}
 
 				break;
