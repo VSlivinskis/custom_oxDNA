@@ -422,7 +422,7 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 			{
 				const repulsive_ellipsoid &f = extF.repulsiveellipsoid;
 
-				// Ellipsoid centre in box coordinates
+				// Centre of the ellipsoid
 				const c_number4 centre = make_c_number4(
 					(c_number)f.centre.x,
 					(c_number)f.centre.y,
@@ -430,89 +430,98 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 					(c_number)0.0
 				);
 
-				// Semi-axes (a_x, a_y, a_z)
-				const c_number ax = (c_number)f.r_2.x;
-				const c_number ay = (c_number)f.r_2.y;
-				const c_number az = (c_number)f.r_2.z;
+				// Base semi-axes at step 0 (input values)
+				const c_number ax0 = (c_number)f.r_2.x;
+				const c_number ay0 = (c_number)f.r_2.y;
+				const c_number az0 = (c_number)f.r_2.z;
+
+				// Uniform growth factor, analogous to Rc = r0 + rate * step
+				c_number growth = (c_number)1.0 + (c_number)f.rate * (c_number)step;
+				if (growth <= (c_number)0.0) {
+					// Degenerate ellipsoid – nothing sensible to do
+					break;
+				}
+
+				// Current semi-axes
+				const c_number ax = ax0 * growth;
+				const c_number ay = ay0 * growth;
+				const c_number az = az0 * growth;
+
+				// -----------------------------------------------------
+				// Debug output: print the real grown ellipsoid size
+				// -----------------------------------------------------
+				if (IND == 0 && (step % 10000 == 0)) {
+					printf("GPU ellipsoid step=%lld rate=%g ax=%g ay=%g az=%g\n",
+						(long long)step,
+						(double)f.rate,
+						(double)ax,
+						(double)ay,
+						(double)az);
+				}
+
+				// Guard against zero axes
+				if (ax <= (c_number)0.0 || ay <= (c_number)0.0 || az <= (c_number)0.0) {
+					break;
+				}
 
 				// Minimum-image displacement from centre to particle
 				c_number4 dist = box->minimum_image(centre, ppos);
-				c_number dx = dist.x;
-				c_number dy = dist.y;
-				c_number dz = dist.z;
+				const c_number dx = dist.x;
+				const c_number dy = dist.y;
+				const c_number dz = dist.z;
 
-				// ------------------------------------------------------------
-				// Ellipsoidal "radius" d.  d = 1 corresponds to the geometric
-				// ellipsoid with semi-axes (ax, ay, az).
-				// ------------------------------------------------------------
-				const c_number sx = dx / ax;
-				const c_number sy = dy / ay;
-				const c_number sz = dz / az;
+				// Ellipsoidal "radius" r':
+				//   r'^2 = (x/a)^2 + (y/b)^2 + (z/c)^2
+				const c_number inv_ax2 = (c_number)1.0 / (ax * ax);
+				const c_number inv_ay2 = (c_number)1.0 / (ay * ay);
+				const c_number inv_az2 = (c_number)1.0 / (az * az);
 
-				const c_number d2 = sx*sx + sy*sy + sz*sz;
-				if (d2 <= (c_number)0.0) {
-					break; // at centre; ignore
-				}
-				const c_number d = sqrt(d2);
+				const c_number rp2 = dx*dx*inv_ax2 + dy*dy*inv_ay2 + dz*dz*inv_az2;
 
-				// ------------------------------------------------------------
-				// WCA cut-off in ellipsoidal metric:
-				//   Rc = 1 + rate * step
-				//
-				// Force is non-zero in 0 < d < Rc, which automatically includes:
-				//   * 0 < d < 1   : inside the ellipsoid
-				//   * 1 < d < Rc  : outer shell outside the ellipsoid surface
-				//
-				// NOTE: To actually get an outer shell, you need Rc > 1.
-				//       With rate = 0 you get Rc = 1, so only the interior
-				//       feels the force.
-				// ------------------------------------------------------------
-				const c_number Rc = (c_number)1.0 + (c_number)f.rate * (c_number)step;
-				if (Rc <= (c_number)0.0) {
+				if (rp2 <= (c_number)0.0) {
+					// At centre; direction undefined
 					break;
 				}
-				if (d >= Rc) {
-					break;      // outside WCA cut-off: no force
+
+				const c_number rp = sqrt(rp2);
+
+				// Ellipsoidal WCA cutoff: r' in (0, Rc_d)
+				// We choose Rc_d = 1.0 so the current ellipsoid surface is r' = 1
+				const c_number Rc_d = (c_number)1.0;
+
+				if (rp <= (c_number)0.0 || rp >= Rc_d) {
+					// Outside cutoff in ellipsoidal radius
+					break;
 				}
 
-				// ------------------------------------------------------------
-				// Standard WCA mapping: Rc = 2^(1/6) * sigma
-				// so sigma = Rc / 2^(1/6)
-				// ------------------------------------------------------------
-				const c_number two_to_1_over_6 = pow((c_number)2.0, (c_number)(1.0/6.0));
-				const c_number sigma = Rc / two_to_1_over_6;
+				// Same WCA mapping as CUDA_REPULSIVE_SPHERE, but in the ellipsoidal metric r'
+				const c_number two_to_1_over_6 = (c_number)1.122462048309373; // 2^(1/6)
+				const c_number sigma = Rc_d / two_to_1_over_6;
 
-				const c_number inv_d    = (c_number)1.0 / d;
-				const c_number s_over_d = sigma * inv_d;
-				const c_number s6       = pow(s_over_d, (c_number)6.0);
-				const c_number s12      = s6 * s6;
+				const c_number inv_rp    = (c_number)1.0 / rp;
+				const c_number s_over_rp = sigma * inv_rp;
 
-				const c_number eps  = (c_number)f.stiff;
-				const c_number Fmag = (c_number)24.0 * eps *
-									((c_number)2.0 * s12 - s6) *
-									inv_d;   // |F(d)| in the WCA core
+				const c_number s2  = s_over_rp * s_over_rp;
+				const c_number s4  = s2 * s2;
+				const c_number s6  = s4 * s2;
+				const c_number s12 = s6 * s6;
 
-				// ------------------------------------------------------------
-				// Ellipsoid normal: gradient of d in lab frame.
-				// This is proportional to (x/a_x^2, y/a_y^2, z/a_z^2),
-				// then normalized.
-				// ------------------------------------------------------------
-				c_number gx = dx / (ax*ax * d);
-				c_number gy = dy / (ay*ay * d);
-				c_number gz = dz / (az*az * d);
+				const c_number eps = (c_number)f.stiff;
 
-				const c_number g2 = gx*gx + gy*gy + gz*gz;
-				if (g2 > (c_number)0.0) {
-					const c_number ginv = rsqrt(g2);
-					gx *= ginv;
-					gy *= ginv;
-					gz *= ginv;
+				// For the sphere, F_vec = 24*eps*(2*s12 - s6) * (r_vec / r^2).
+				// Here we treat the potential as V(r') with the same radial form,
+				// and transform back to unscaled coordinates:
+				//
+				//   x' = x/a,  r' = sqrt(x'^2 + y'^2 + z'^2)
+				//   F_x = 24*eps*(2*s12 - s6) * x / (a^2 * r'^2), etc.
+				//
+				const c_number pref = (c_number)24.0 * eps *
+									((c_number)2.0 * s12 - s6) /
+									rp2;   // rp^2 in the denominator
 
-					// Add contribution to total force on the particle
-					F.x += Fmag * gx;
-					F.y += Fmag * gy;
-					F.z += Fmag * gz;
-				}
+				F.x += pref * dx * inv_ax2;
+				F.y += pref * dy * inv_ay2;
+				F.z += pref * dz * inv_az2;
 
 				break;
 			}

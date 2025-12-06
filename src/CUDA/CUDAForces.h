@@ -367,19 +367,21 @@ void init_LJCone_from_CPU(LJ_cone *cuda_force, LJCone *cpu_force) {
  * @brief CUDA version of a RepulsiveEllipsoid.
  */
 struct repulsive_ellipsoid {
-	int type;
-	c_number stiff;
-	c_number rate;   // NEW: growth rate
-	float3 r_1, r_2, centre;
+    int type;
+    c_number stiff;
+    c_number rate;   // NEW: growth rate
+    float3 r_1, r_2, centre;
 };
 
 void init_RepulsiveEllipsoid_from_CPU(repulsive_ellipsoid *cuda_force, RepulsiveEllipsoid *cpu_force) {
-	cuda_force->type = CUDA_REPULSIVE_ELLIPSOID;
-	cuda_force->stiff = cpu_force->_stiff;
-	cuda_force->centre = make_float3(cpu_force->_centre.x, cpu_force->_centre.y, cpu_force->_centre.z);
-	cuda_force->r_1 = make_float3(cpu_force->_r_1.x, cpu_force->_r_1.y, cpu_force->_r_1.z);
-	cuda_force->r_2 = make_float3(cpu_force->_r_2.x, cpu_force->_r_2.y, cpu_force->_r_2.z);
+    cuda_force->type  = CUDA_REPULSIVE_ELLIPSOID;
+    cuda_force->stiff = cpu_force->_stiff;
+    cuda_force->rate  = cpu_force->_rate;   // <<< ADD THIS LINE >>>
+    cuda_force->centre = make_float3(cpu_force->_centre.x, cpu_force->_centre.y, cpu_force->_centre.z);
+    cuda_force->r_1    = make_float3(cpu_force->_r_1.x, cpu_force->_r_1.y, cpu_force->_r_1.z);
+    cuda_force->r_2    = make_float3(cpu_force->_r_2.x, cpu_force->_r_2.y, cpu_force->_r_2.z);
 }
+
 
 /**
  * @brief CUDA version of a COMForce.
