@@ -22,6 +22,17 @@ public:
     std::tuple<std::vector<int>, std::string> init(input_file &inp) override;
     LR_vector value(llint step, LR_vector &pos) override;
     number    potential(llint step, LR_vector &pos) override;
+    
+    // --- CUDA/host-side accessors (needed by CUDAForces.h) ---
+    number    stiff()  const { return _stiff; }
+    number    r0()     const { return _r0; }
+    number    rate()   const { return _rate; }
+    number    r_ext()  const { return _r_ext; }
+
+    LR_vector origin() const { return _origin; }
+    LR_vector target() const { return _target; }
+    llint     steps()  const { return _steps; }
+
 
 private:
     // Interpolated center at a given MD step

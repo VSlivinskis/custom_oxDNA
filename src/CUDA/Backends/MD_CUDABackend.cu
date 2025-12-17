@@ -211,6 +211,10 @@ void MD_CUDABackend::_apply_external_forces_changes() {
 					YukawaSphere *p_force = (YukawaSphere *) p->ext_forces[j];
 					init_YukawaSphere_from_CPU(&cuda_force->yukawasphere, p_force);
 				}
+				else if(force_type == typeid(RepulsiveSphereMoving)) {
+					RepulsiveSphereMoving *p_force = (RepulsiveSphereMoving *) p->ext_forces[j];
+					init_RepulsiveSphereMoving_from_CPU(&cuda_force->repulsivespheremoving, p_force);
+				}
 				else {
 					throw oxDNAException("Only ConstantRate, MutualTrap, MovingTrap, LowdimMovingTrap, RepulsionPlane, "
 							"RepulsionPlaneMoving, RepulsiveSphere, LJWall, ConstantRateTorque, GenericCentralForce, "

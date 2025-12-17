@@ -260,14 +260,18 @@ struct repulsive_sphere_moving {
 
 void init_RepulsiveSphereMoving_from_CPU(repulsive_sphere_moving *cuda_force, RepulsiveSphereMoving *cpu_force) {
     cuda_force->type  = CUDA_REPULSIVE_SPHERE_MOVING;
-    cuda_force->stiff = cpu_force->_stiff;
-    cuda_force->r0    = cpu_force->_r0;
-    cuda_force->rate  = cpu_force->_rate;
-    cuda_force->r_ext = cpu_force->_r_ext;
 
-    cuda_force->origin = make_float3(cpu_force->_origin.x, cpu_force->_origin.y, cpu_force->_origin.z);
-    cuda_force->target = make_float3(cpu_force->_target.x, cpu_force->_target.y, cpu_force->_target.z);
-    cuda_force->steps  = cpu_force->_steps;
+    cuda_force->stiff = cpu_force->stiff();
+    cuda_force->r0    = cpu_force->r0();
+    cuda_force->rate  = cpu_force->rate();
+    cuda_force->r_ext = cpu_force->r_ext();
+
+    const LR_vector o = cpu_force->origin();
+    const LR_vector t = cpu_force->target();
+
+    cuda_force->origin = make_float3(o.x, o.y, o.z);
+    cuda_force->target = make_float3(t.x, t.y, t.z);
+    cuda_force->steps  = cpu_force->steps();
 }
 
 

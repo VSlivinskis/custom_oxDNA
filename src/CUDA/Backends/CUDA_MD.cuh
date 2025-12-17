@@ -253,8 +253,8 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 				const c_number rate  = extF.repulsivespheremoving.rate;
 				const c_number r_ext = extF.repulsivespheremoving.r_ext;
 
-				const c_number3 org  = extF.repulsivespheremoving.origin;
-				const c_number3 tgt  = extF.repulsivespheremoving.target;
+				const float3 org  = extF.repulsivespheremoving.origin;
+				const float3 tgt  = extF.repulsivespheremoving.target;
 				const llint steps_mv = extF.repulsivespheremoving.steps;
 
 				// ===== center_for_step(step): origin + (target-origin)*t, with clamp =====
