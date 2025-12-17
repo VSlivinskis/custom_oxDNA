@@ -53,6 +53,7 @@
 #define CUDA_YUKAWA_SPHERE 15
 #define CUDA_ATTRACTION_PLANE 16
 #define CUDA_AFM_MOVING_SPHERE 17
+#define CUDA_REPULSIVE_SPHERE_MOVING 18
 
 /**
  * @brief CUDA version of a ConstantRateForce.
@@ -242,33 +243,32 @@ void init_RepulsiveSphereSmooth_from_CPU(repulsive_sphere_smooth *cuda_force, Re
 	cuda_force->centre = make_float3(cpu_force->_center.x, cpu_force->_center.y, cpu_force->_center.z);
 }
 
-// /// CUDA version of AFMMovingSphere (scripted AFM tip)
-// struct afm_moving_sphere {
-//     int      type;
-//     c_number stiff;     // _stiff
-//     c_number r0;        // _r0 (initial sphere radius)
-//     c_number rate;      // _rate (radius slope vs step)
-//     c_number r_ext;     // _r_ext (outer halo cutoff)
-//     llint    steps;     // _steps (for center_for_step)
-//     float3   origin;    // _origin
-//     float3   target;    // _target
-// };
+/**
+ * @brief CUDA version of a RepulsiveSphereMoving.
+ */
+struct repulsive_sphere_moving {
+    int type;
+    c_number stiff;
+    c_number r0;
+    c_number rate;
+    c_number r_ext;
 
-// inline void init_AFMMovingSphere_from_CPU(afm_moving_sphere *cuda_force,
-//                                           AFMMovingSphere   *cpu_force) {
-//     cuda_force->type   = CUDA_AFM_MOVING_SPHERE;
-//     cuda_force->stiff  = cpu_force->_stiff;
-//     cuda_force->r0     = cpu_force->_r0;
-//     cuda_force->rate   = cpu_force->_rate;
-//     cuda_force->r_ext  = cpu_force->_r_ext;
-//     cuda_force->steps  = cpu_force->_steps;
-//     cuda_force->origin = make_float3(cpu_force->_origin.x,
-//                                      cpu_force->_origin.y,
-//                                      cpu_force->_origin.z);
-//     cuda_force->target = make_float3(cpu_force->_target.x,
-//                                      cpu_force->_target.y,
-//                                      cpu_force->_target.z);
-// }
+    float3 origin;
+    float3 target;
+    llint steps;
+};
+
+void init_RepulsiveSphereMoving_from_CPU(repulsive_sphere_moving *cuda_force, RepulsiveSphereMoving *cpu_force) {
+    cuda_force->type  = CUDA_REPULSIVE_SPHERE_MOVING;
+    cuda_force->stiff = cpu_force->_stiff;
+    cuda_force->r0    = cpu_force->_r0;
+    cuda_force->rate  = cpu_force->_rate;
+    cuda_force->r_ext = cpu_force->_r_ext;
+
+    cuda_force->origin = make_float3(cpu_force->_origin.x, cpu_force->_origin.y, cpu_force->_origin.z);
+    cuda_force->target = make_float3(cpu_force->_target.x, cpu_force->_target.y, cpu_force->_target.z);
+    cuda_force->steps  = cpu_force->_steps;
+}
 
 
 /**
@@ -536,7 +536,7 @@ union CUDA_trap {
     lt_com_trap              ltcomtrap;
     Yukawa_sphere            yukawasphere;
     attraction_plane         attractionplane;
-    // afm_moving_sphere        afmmovingsphere;
+	repulsive_sphere_moving  repulsivespheremoving;
 };
 
 

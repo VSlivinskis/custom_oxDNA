@@ -246,57 +246,71 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 
 				break;
 			}
-			// case CUDA_AFM_MOVING_SPHERE: {
+			case CUDA_REPULSIVE_SPHERE_MOVING: {
+				// ===== parameters =====
+				const c_number eps   = extF.repulsivespheremoving.stiff;
+				const c_number r0    = extF.repulsivespheremoving.r0;
+				const c_number rate  = extF.repulsivespheremoving.rate;
+				const c_number r_ext = extF.repulsivespheremoving.r_ext;
 
-			// 	const afm_moving_sphere &afm = trap.afmmovingsphere;
+				const c_number3 org  = extF.repulsivespheremoving.origin;
+				const c_number3 tgt  = extF.repulsivespheremoving.target;
+				const llint steps_mv = extF.repulsivespheremoving.steps;
 
-			// 	// 1) Scripted center_for_step(step)
-			// 	c_number t = (afm.steps > 0)
-			// 			? (c_number)step / (c_number)afm.steps
-			// 			: (c_number)0.0;
-			// 	if (t < (c_number)0.0) t = (c_number)0.0;
-			// 	if (t > (c_number)1.0) t = (c_number)1.0;
+				// ===== center_for_step(step): origin + (target-origin)*t, with clamp =====
+				c_number t = (c_number)0;
+				if (steps_mv > 0) {
+					t = (c_number)step / (c_number)steps_mv;
+					if (t < (c_number)0) t = (c_number)0;
+					if (t > (c_number)1) t = (c_number)1;
+				}
+				c_number4 centre = make_c_number4(
+					org.x + (tgt.x - org.x) * t,
+					org.y + (tgt.y - org.y) * t,
+					org.z + (tgt.z - org.z) * t,
+					(c_number)0
+				);
 
-			// 	float3 center;
-			// 	center.x = afm.origin.x + (afm.target.x - afm.origin.x) * t;
-			// 	center.y = afm.origin.y + (afm.target.y - afm.origin.y) * t;
-			// 	center.z = afm.origin.z + (afm.target.z - afm.origin.z) * t;
+				// ===== dist from moving center (minimum image) =====
+				c_number4 dist  = box->minimum_image(centre, ppos);
+				c_number  mdist = _module(dist);
 
-			// 	// 2) Minimum-image vector from tip center to particle
-			// 	// You already have a helper for this in the repulsive-sphere case;
-			// 	// reuse the same pattern. Example (adapt names to your code):
-			// 	LR_vector c_vec(center.x, center.y, center.z);
-			// 	LR_vector r_vec = box->min_image(pos[i], c_vec);  // or min_image(c_vec, pos[i]) depending on convention
-			// 	c_number mdist  = r_vec.module();
+				// sphere radius grows with MD step: radius = r0 + rate * step
+				c_number radius = r0 + rate * (c_number)step;
 
-			// 	// 3) Radius and overlap at this step
-			// 	c_number radius  = afm.r0 + afm.rate * (c_number)step;
-			// 	c_number overlap = radius - mdist;
+				// early exits (match CPU): mdist <= 0 or outside r_ext
+				if (mdist <= (c_number)0 || mdist >= r_ext) break;
 
-			// 	LR_vector fi((c_number)0.0, (c_number)0.0, (c_number)0.0);
+				// surface gap r = mdist - radius
+				c_number r = mdist - radius;
 
-			// 	// 4A) Contact: inside the tip
-			// 	if (overlap > (c_number)0.0) {
-			// 		LR_vector n_hat = r_vec / (mdist + (c_number)1e-12);
-			// 		c_number fmag   = afm.stiff * overlap;
-			// 		fi = n_hat * fmag;
+				// WCA cutoff at LJ minimum: rc = 2^(1/6) * sigma, with sigma = 1
+				// Use a compile-time constant (float is fine; it gets promoted)
+				const c_number rc = (c_number)1.122462048309373f;
 
-			// 	// 4B) Gaussian halo, if within r_ext
-			// 	} else if (mdist < afm.r_ext) {
-			// 		c_number gap   = -overlap;            // = mdist - radius
-			// 		c_number sigma = (c_number)0.5;       // same as in AFMMovingSphere::value/potential
-			// 		c_number fmag  = afm.stiff * exp( - (gap * gap) / ( (c_number)2.0 * sigma * sigma ) );
-			// 		LR_vector n_hat = r_vec / (mdist + (c_number)1e-12);
-			// 		fi = n_hat * fmag;
-			// 	}
+				if (r >= rc) break;
 
-			// 	// 5) Add to the particle force
-			// 	f[i].x += fi.x;
-			// 	f[i].y += fi.y;
-			// 	f[i].z += fi.z;
+				// avoid singularities if r <= 0
+				const c_number r_safe = (r > (c_number)1e-9) ? r : (c_number)1e-9;
 
-			// 	break;
-			// }
+				// Fmag = 24*eps*(2/r^13 - 1/r^7) (sigma=1)
+				const c_number inv_r  = (c_number)1 / r_safe;
+				const c_number inv_r2 = inv_r * inv_r;
+				const c_number inv_r6 = inv_r2 * inv_r2 * inv_r2;   // r^-6
+				const c_number inv_r7 = inv_r6 * inv_r;             // r^-7
+				const c_number inv_r13 = inv_r7 * inv_r6;           // r^-13
+
+				const c_number Fmag = (c_number)24 * eps * ((c_number)2 * inv_r13 - inv_r7);
+
+				// direction: outward normal n = dist / mdist
+				const c_number inv_mdist = (c_number)1 / mdist;
+
+				F.x += dist.x * inv_mdist * Fmag;
+				F.y += dist.y * inv_mdist * Fmag;
+				F.z += dist.z * inv_mdist * Fmag;
+
+				break;
+			}
 			case CUDA_REPULSIVE_SPHERE_SMOOTH: {
 				c_number4 centre = make_c_number4(extF.repulsivespheresmooth.centre.x, extF.repulsivespheresmooth.centre.y, extF.repulsivespheresmooth.centre.z, 0.);
 				c_number4 dist = box->minimum_image(centre, ppos);
