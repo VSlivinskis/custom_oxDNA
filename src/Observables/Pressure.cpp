@@ -43,10 +43,10 @@ std::string Pressure::get_output_string(llint curr_step) {
 	std::string to_ret;
 
 	if(_with_stress_tensor) {
-		to_ret += Utils::sformat("% .8e % .8e % .8e % .8e % .8e % .8e % .8e", P, stress_tensor[0], stress_tensor[1], stress_tensor[2], stress_tensor[3], stress_tensor[4], stress_tensor[5]);
+		to_ret += Utils::sformat("% .25e % .25e % .25e % .25e % .25e % .25e % .25e", P, stress_tensor[0], stress_tensor[1], stress_tensor[2], stress_tensor[3], stress_tensor[4], stress_tensor[5]);
 	}
 	else {
-		to_ret += Utils::sformat("% .8e", P);
+		to_ret += Utils::sformat("% .25e", P);
 	}
 
 	return to_ret;

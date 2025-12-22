@@ -247,70 +247,71 @@ __global__ void set_external_forces(c_number4 *poss, GPU_quat *orientations, CUD
 				break;
 			}
 			case CUDA_REPULSIVE_SPHERE_MOVING: {
-				// ===== parameters =====
 				const c_number eps   = extF.repulsivespheremoving.stiff;
 				const c_number r0    = extF.repulsivespheremoving.r0;
 				const c_number rate  = extF.repulsivespheremoving.rate;
 				const c_number r_ext = extF.repulsivespheremoving.r_ext;
 
-				const float3 org  = extF.repulsivespheremoving.origin;
-				const float3 tgt  = extF.repulsivespheremoving.target;
-				const llint steps_mv = extF.repulsivespheremoving.steps;
+				const float3 org_f = extF.repulsivespheremoving.origin;
+				const float3 tgt_f = extF.repulsivespheremoving.target;
+				const llint  steps_mv = extF.repulsivespheremoving.steps;
 
-				// ===== center_for_step(step): origin + (target-origin)*t, with clamp =====
 				c_number t = (c_number)0;
 				if (steps_mv > 0) {
 					t = (c_number)step / (c_number)steps_mv;
 					if (t < (c_number)0) t = (c_number)0;
 					if (t > (c_number)1) t = (c_number)1;
 				}
+
+				const c_number orgx = (c_number)org_f.x, orgy = (c_number)org_f.y, orgz = (c_number)org_f.z;
+				const c_number tgtx = (c_number)tgt_f.x, tgty = (c_number)tgt_f.y, tgtz = (c_number)tgt_f.z;
+
 				c_number4 centre = make_c_number4(
-					org.x + (tgt.x - org.x) * t,
-					org.y + (tgt.y - org.y) * t,
-					org.z + (tgt.z - org.z) * t,
+					orgx + (tgtx - orgx) * t,
+					orgy + (tgty - orgy) * t,
+					orgz + (tgtz - orgz) * t,
 					(c_number)0
 				);
 
-				// ===== dist from moving center (minimum image) =====
 				c_number4 dist  = box->minimum_image(centre, ppos);
 				c_number  mdist = _module(dist);
 
-				// sphere radius grows with MD step: radius = r0 + rate * step
-				c_number radius = r0 + rate * (c_number)step;
+				const c_number radius = r0 + rate * (c_number)step;
 
-				// early exits (match CPU): mdist <= 0 or outside r_ext
 				if (mdist <= (c_number)0 || mdist >= r_ext) break;
 
-				// surface gap r = mdist - radius
-				c_number r = mdist - radius;
+				const c_number r = mdist - radius;
 
-				// WCA cutoff at LJ minimum: rc = 2^(1/6) * sigma, with sigma = 1
-				// Use a compile-time constant (float is fine; it gets promoted)
-				const c_number rc = (c_number)1.122462048309373f;
-
+				const c_number rc = (c_number)1.122462048309373;
 				if (r >= rc) break;
 
-				// avoid singularities if r <= 0
 				const c_number r_safe = (r > (c_number)1e-9) ? r : (c_number)1e-9;
 
-				// Fmag = 24*eps*(2/r^13 - 1/r^7) (sigma=1)
-				const c_number inv_r  = (c_number)1 / r_safe;
-				const c_number inv_r2 = inv_r * inv_r;
-				const c_number inv_r6 = inv_r2 * inv_r2 * inv_r2;   // r^-6
-				const c_number inv_r7 = inv_r6 * inv_r;             // r^-7
+				const c_number inv_r   = (c_number)1 / r_safe;
+				const c_number inv_r2  = inv_r * inv_r;
+				const c_number inv_r6  = inv_r2 * inv_r2 * inv_r2;  // r^-6
+				const c_number inv_r7  = inv_r6 * inv_r;            // r^-7
+				const c_number inv_r12 = inv_r6 * inv_r6;           // r^-12
 				const c_number inv_r13 = inv_r7 * inv_r6;           // r^-13
 
+				// ---- FORCE (CPU-match) ----
 				const c_number Fmag = (c_number)24 * eps * ((c_number)2 * inv_r13 - inv_r7);
-
-				// direction: outward normal n = dist / mdist
 				const c_number inv_mdist = (c_number)1 / mdist;
 
 				F.x += dist.x * inv_mdist * Fmag;
 				F.y += dist.y * inv_mdist * Fmag;
 				F.z += dist.z * inv_mdist * Fmag;
 
+				// ---- POTENTIAL (CPU-match: shifted WCA) ----
+				// U = 4*eps*(1/r^12 - 1/r^6) + eps
+				const c_number U = (c_number)4 * eps * (inv_r12 - inv_r6) + eps;
+
+				// TODO: replace U_ext with the actual accumulator in your kernel
+				// U_ext += U;
+
 				break;
 			}
+
 			case CUDA_REPULSIVE_SPHERE_SMOOTH: {
 				c_number4 centre = make_c_number4(extF.repulsivespheresmooth.centre.x, extF.repulsivespheresmooth.centre.y, extF.repulsivespheresmooth.centre.z, 0.);
 				c_number4 dist = box->minimum_image(centre, ppos);
