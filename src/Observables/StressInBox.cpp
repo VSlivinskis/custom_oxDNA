@@ -1,153 +1,181 @@
 #include "StressInBox.h"
 
-#include <sstream>
 #include <cmath>
-#include <fstream>   // header-if-empty check
-#include <iomanip>   // setprecision, scientific
+#include <sstream>
+#include <iomanip>
+#include <fstream>
+
+// Important: use relative includes from src/Observables
+#include "../Boxes/BaseBox.h"
+#include "../Particles/BaseParticle.h"
 
 StressInBox::StressInBox() : BaseObservable() {}
 
 StressInBox::~StressInBox() {
-    if(_out.is_open()) _out.close();
-}
-
-void StressInBox::get_settings(input_file &my_inp, input_file &sim_inp) {
-    BaseObservable::get_settings(my_inp, sim_inp);
-
-    // side length
-    getInputDouble(&my_inp, "L", &_L, 0);
-
-    // center (default 0,0,0)
-    double cx = 0., cy = 0., cz = 0.;
-    getInputDouble(&my_inp, "cx", &cx, 0);
-    getInputDouble(&my_inp, "cy", &cy, 0);
-    getInputDouble(&my_inp, "cz", &cz, 0);
-    _center = LR_vector(cx, cy, cz);
-
-    // output control
-    getInputBool(&my_inp, "dump_tensor", &_dump_tensor, 0);
-    getInputString(&my_inp, "tensor_file", _tensor_filename, 0);
-
-    _halfL = 0.5 * _L;
-    _Vbox  = _L * _L * _L;
-
-    OX_LOG(Logger::LOG_INFO,
-           "Initialising StressInBox with center=(%.6f,%.6f,%.6f), L=%.6f, tensor_file=%s",
-           _center.x, _center.y, _center.z, _L, _tensor_filename.c_str());
-}
-
-void StressInBox::init() {
-    if(_dump_tensor) {
-        // Check if file exists + empty (to write header once)
-        bool is_empty = true;
-        {
-            std::ifstream fin(_tensor_filename.c_str());
-            if(fin.good()) {
-                is_empty = (fin.peek() == std::ifstream::traits_type::eof());
-            }
-        }
-
-        _out.open(_tensor_filename.c_str(), std::ios::out | std::ios::app);
-        if(!_out.good()) {
-            throw oxDNAException("StressInBox: cannot open '%s' for writing", _tensor_filename.c_str());
-        }
-
-        // High precision + scientific notation so tiny forces don't print as 0
-        _out.setf(std::ios::scientific);
-        _out << std::setprecision(8);
-
-        if(is_empty) {
-            _out << "# step  "
-                 << "xx xy xz  "
-                 << "yx yy yz  "
-                 << "zx zy zz  "
-                 << "N_in_box "
-                 << "Fsum_in_box Fmax_in_box nFpos_in_box"
-                 << std::endl;
-            _out.flush();
-        }
-    }
+    if(_dbg.is_open()) _dbg.close();
 }
 
 bool StressInBox::require_data_on_CPU() {
     return true;
 }
 
-// In this oxDNA version BaseBox::min_image takes TWO args and returns the minimum-image displacement
-LR_vector StressInBox::_pbc_displacement_to_center(const LR_vector& r) const {
-    return _config_info->box->min_image(r, _center);
+void StressInBox::get_settings(input_file &my_inp, input_file &sim_inp) {
+    BaseObservable::get_settings(my_inp, sim_inp);
+
+    // Side length (optional)
+    getInputDouble(&my_inp, "L", &_L, 0);
+
+    // Center (optional; default 0,0,0)
+    double cx = 0.0, cy = 0.0, cz = 0.0;
+    getInputDouble(&my_inp, "center_x", &cx, 0);
+    getInputDouble(&my_inp, "center_y", &cy, 0);
+    getInputDouble(&my_inp, "center_z", &cz, 0);
+    _center = LR_vector(cx, cy, cz);
+
+    // Debug controls (all optional)
+    getInputBool(&my_inp, "debug", &_debug, 0);
+    getInputLLInt(&my_inp, "debug_every", &_debug_every, 0);
+    getInputInt(&my_inp, "debug_samples", &_debug_samples, 0);
+    getInputString(&my_inp, "debug_file", _debug_filename, 0);
+
+    // Precompute
+    _halfL = 0.5 * _L;
+    _Vbox  = _L * _L * _L;
+    if(_Vbox <= 0.0) {
+        // Avoid oxDNAException include here; just clamp to prevent div0
+        _Vbox = 1.0;
+    }
 }
 
-bool StressInBox::_inside_box(const LR_vector& r) const {
-    const LR_vector dr = _pbc_displacement_to_center(r);
-    return (std::fabs(dr.x) <= _halfL &&
-            std::fabs(dr.y) <= _halfL &&
-            std::fabs(dr.z) <= _halfL);
+void StressInBox::init() {
+    BaseObservable::init();
+
+    if (_debug) {
+        bool empty = true;
+        std::ifstream fin(_debug_filename.c_str());
+        if (fin.good())
+            empty = (fin.peek() == std::ifstream::traits_type::eof());
+
+        _dbg.open(_debug_filename.c_str(), std::ios::out | std::ios::app);
+        _dbg.setf(std::ios::scientific);
+        _dbg << std::setprecision(16);
+
+        if (empty) {
+            _dbg << "# step n_in "
+                 << "Fsum_abs Fmax_abs nFpos "
+                 << "dr_abs_sum dr_abs_max "
+                 << "virial_abs_sum "
+                 << "xx xy xz yx yy yz zx zy zz\n";
+            _dbg.flush();
+        }
+    }
 }
 
 void StressInBox::update_data(llint curr_step) {
-    // In your codebase, particles is a METHOD
-    auto &particles = _config_info->particles();
+    // reset tensor
+    xx = yy = zz = 0.0;
+    xy = xz = yz = 0.0;
+    yx = zx = zy = 0.0;
 
-    // Tensor accumulator
-    double xx = 0., xy = 0., xz = 0.;
-    double yx = 0., yy = 0., yz = 0.;
-    double zx = 0., zy = 0., zz = 0.;
+    // reset diagnostics
+    n_in = 0;
+    Fsum_abs = 0.0;
+    Fmax_abs = 0.0;
+    nFpos = 0;
 
-    llint n_in = 0;
+    Fsum_vec = LR_vector(0.,0.,0.);
+    dr_abs_sum = 0.0;
+    dr_abs_max = 0.0;
+    virial_abs_sum = 0.0;
 
-    // Diagnostics: are forces actually present?
-    double Fsum = 0.0;
-    double Fmax = 0.0;
-    llint nFpos = 0;
+    BaseBox *box = _config_info->box;
 
-    for(size_t i = 0; i < particles.size(); i++) {
-        BaseParticle *p = particles[i];
+    // NOTE: in your fork, particles is a METHOD, not a member
+    auto &parts = _config_info->particles();
+    const int N = (int) parts.size();
 
-        const LR_vector r = p->pos;
-        if(!_inside_box(r)) continue;
+    int dumped = 0;
+
+    for(int i = 0; i < N; i++) {
+        BaseParticle *p = parts[i];
+
+        // displacement from center with minimum image (PBC aware)
+        LR_vector dr = box->min_image(p->pos, _center);
+
+        if(!_inside_box(dr)) continue;
 
         n_in++;
 
-        // total force on particle (as seen on CPU)
-        const LR_vector F  = p->force;
+        // total force on particle
+        LR_vector F = p->force;
 
         const double fmod = F.module();
-        Fsum += fmod;
-        if(fmod > Fmax) Fmax = fmod;
+        Fsum_abs += fmod;
+        if(fmod > Fmax_abs) Fmax_abs = fmod;
         if(fmod > 0.0) nFpos++;
 
-        // displacement from center with MIC
-        const LR_vector dr = _pbc_displacement_to_center(r);
+        Fsum_vec += F;
 
-        // virial proxy: dr ⊗ F
+        const double dr_abs = dr.module();
+        dr_abs_sum += dr_abs;
+        if(dr_abs > dr_abs_max) dr_abs_max = dr_abs;
+
+        // Your current estimator: dr ⊗ F  (not true virial; debug is to diagnose cancellation)
         xx += dr.x * F.x;  xy += dr.x * F.y;  xz += dr.x * F.z;
         yx += dr.y * F.x;  yy += dr.y * F.y;  yz += dr.y * F.z;
         zx += dr.z * F.x;  zy += dr.z * F.y;  zz += dr.z * F.z;
+
+        // cancellation-proof magnitude
+        virial_abs_sum += std::fabs(dr.x*F.x) + std::fabs(dr.x*F.y) + std::fabs(dr.x*F.z)
+                       +  std::fabs(dr.y*F.x) + std::fabs(dr.y*F.y) + std::fabs(dr.y*F.z)
+                       +  std::fabs(dr.z*F.x) + std::fabs(dr.z*F.y) + std::fabs(dr.z*F.z);
+
+        // --- debug sample ---
+        if (_debug &&
+            _debug_every > 0 &&
+            (curr_step % _debug_every == 0) &&
+            dumped < _debug_samples)
+        {
+            _dbg << "# sample step=" << curr_step
+                 << " i=" << i
+                 << " dr=(" << dr.x << "," << dr.y << "," << dr.z << ")"
+                 << " F=("  << F.x  << "," << F.y  << "," << F.z  << ")"
+                 << " |F|=" << fmod << "\n";
+            dumped++;
+        }
     }
 
-    // Convert to "stress" by dividing by Vbox
-    const double invV = (_Vbox > 0.0) ? (1.0 / _Vbox) : 0.0;
+    const double invV = 1.0 / _Vbox;
+    xx *= invV; yy *= invV; zz *= invV;
+    xy *= invV; xz *= invV; yz *= invV;
+    yx *= invV; zx *= invV; zy *= invV;
 
-    xx *= invV; xy *= invV; xz *= invV;
-    yx *= invV; yy *= invV; yz *= invV;
-    zx *= invV; zy *= invV; zz *= invV;
-
-    if(_dump_tensor && _out.is_open()) {
-        _out << curr_step << "  "
-             << xx << " " << xy << " " << xz << "  "
-             << yx << " " << yy << " " << yz << "  "
-             << zx << " " << zy << " " << zz << "  "
-             << n_in << " "
-             << Fsum << " " << Fmax << " " << nFpos
+    if(_debug && _dbg.is_open()) {
+        _dbg << curr_step << " " << n_in << " "
+             << Fsum_abs << " "
+             << Fsum_vec.x << " " << Fsum_vec.y << " " << Fsum_vec.z << " "
+             << dr_abs_sum << " " << dr_abs_max << " "
+             << virial_abs_sum << " "
+             << xx << " " << yy << " " << zz << " "
+             << xy << " " << xz << " " << yz
              << "\n";
-        _out.flush();
+        _dbg.flush();
     }
-
-    _times_updated++;
 }
 
 std::string StressInBox::get_output_string(llint curr_step) {
-    (void) curr_step;
-    return std::string();
+    std::ostringstream out;
+    out.setf(std::ios::scientific);
+    out << std::setprecision(4);
+
+    // Main observable output line
+    out << curr_step << " "
+        << xx << " " << yy << " " << zz << " "
+        << xy << " " << xz << " " << yz << " "
+        << n_in << " "
+        << Fsum_abs << " " << Fmax_abs << " " << nFpos << " "
+        << Fsum_vec.x << " " << Fsum_vec.y << " " << Fsum_vec.z << " "
+        << dr_abs_sum << " " << dr_abs_max << " "
+        << virial_abs_sum;
+    return out.str();
 }
