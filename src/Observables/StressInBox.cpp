@@ -2,7 +2,8 @@
 
 #include <sstream>
 #include <cmath>
-#include <fstream>   // for header-if-empty check
+#include <fstream>   // header-if-empty check
+#include <iomanip>   // setprecision, scientific
 
 StressInBox::StressInBox() : BaseObservable() {}
 
@@ -51,12 +52,17 @@ void StressInBox::init() {
             throw oxDNAException("StressInBox: cannot open '%s' for writing", _tensor_filename.c_str());
         }
 
+        // High precision + scientific notation so tiny forces don't print as 0
+        _out.setf(std::ios::scientific);
+        _out << std::setprecision(8);
+
         if(is_empty) {
             _out << "# step  "
                  << "xx xy xz  "
                  << "yx yy yz  "
                  << "zx zy zz  "
-                 << "N_in_box"
+                 << "N_in_box "
+                 << "Fsum_in_box Fmax_in_box nFpos_in_box"
                  << std::endl;
             _out.flush();
         }
@@ -64,7 +70,6 @@ void StressInBox::init() {
 }
 
 bool StressInBox::require_data_on_CPU() {
-    // Keep true (BaseObservable default is true too), but explicit makes intent clear.
     return true;
 }
 
@@ -81,14 +86,20 @@ bool StressInBox::_inside_box(const LR_vector& r) const {
 }
 
 void StressInBox::update_data(llint curr_step) {
-    // IMPORTANT: in your codebase, particles is a METHOD
+    // In your codebase, particles is a METHOD
     auto &particles = _config_info->particles();
 
     // Tensor accumulator
     double xx = 0., xy = 0., xz = 0.;
     double yx = 0., yy = 0., yz = 0.;
     double zx = 0., zy = 0., zz = 0.;
+
     llint n_in = 0;
+
+    // Diagnostics: are forces actually present?
+    double Fsum = 0.0;
+    double Fmax = 0.0;
+    llint nFpos = 0;
 
     for(size_t i = 0; i < particles.size(); i++) {
         BaseParticle *p = particles[i];
@@ -98,8 +109,13 @@ void StressInBox::update_data(llint curr_step) {
 
         n_in++;
 
-        // total force on particle
+        // total force on particle (as seen on CPU)
         const LR_vector F  = p->force;
+
+        const double fmod = F.module();
+        Fsum += fmod;
+        if(fmod > Fmax) Fmax = fmod;
+        if(fmod > 0.0) nFpos++;
 
         // displacement from center with MIC
         const LR_vector dr = _pbc_displacement_to_center(r);
@@ -111,7 +127,7 @@ void StressInBox::update_data(llint curr_step) {
     }
 
     // Convert to "stress" by dividing by Vbox
-    const double invV = 1.0 / _Vbox;
+    const double invV = (_Vbox > 0.0) ? (1.0 / _Vbox) : 0.0;
 
     xx *= invV; xy *= invV; xz *= invV;
     yx *= invV; yy *= invV; yz *= invV;
@@ -122,7 +138,8 @@ void StressInBox::update_data(llint curr_step) {
              << xx << " " << xy << " " << xz << "  "
              << yx << " " << yy << " " << yz << "  "
              << zx << " " << zy << " " << zz << "  "
-             << n_in
+             << n_in << " "
+             << Fsum << " " << Fmax << " " << nFpos
              << "\n";
         _out.flush();
     }
@@ -131,7 +148,6 @@ void StressInBox::update_data(llint curr_step) {
 }
 
 std::string StressInBox::get_output_string(llint curr_step) {
-    // This observable is file-writing. Returning empty avoids clutter in any generic stream.
     (void) curr_step;
     return std::string();
 }

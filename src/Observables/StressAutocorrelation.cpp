@@ -236,13 +236,13 @@ std::string StressAutocorrelation::get_output_string(llint curr_step) {
             double longitudinal_Gyy = V / T * acf_sigma_yy[i];
             double longitudinal_Gzz = V / T * acf_sigma_zz[i];
 
-            ss << Utils::sformat(" %.8e", Gxy)
-               << Utils::sformat(" %.8e", Gyz)
-               << Utils::sformat(" %.8e", Gzx)
-               << Utils::sformat(" %.8e", bulk_Gt)
-               << Utils::sformat(" %.8e", longitudinal_Gxx)
-               << Utils::sformat(" %.8e", longitudinal_Gyy)
-               << Utils::sformat(" %.8e", longitudinal_Gzz)
+            ss << Utils::sformat(" %.25e", Gxy)
+               << Utils::sformat(" %.25e", Gyz)
+               << Utils::sformat(" %.25e", Gzx)
+               << Utils::sformat(" %.25e", bulk_Gt)
+               << Utils::sformat(" %.25e", longitudinal_Gxx)
+               << Utils::sformat(" %.25e", longitudinal_Gyy)
+               << Utils::sformat(" %.25e", longitudinal_Gzz)
                << std::endl;
         }
         else {
@@ -251,9 +251,9 @@ std::string StressAutocorrelation::get_output_string(llint curr_step) {
 
             double longitudinal_Gt = V / (3. * T) * (acf_sigma_xx[i] + acf_sigma_yy[i] + acf_sigma_zz[i]);
 
-            ss << Utils::sformat(" %.8e", Gt)
-               << Utils::sformat(" %.8e", bulk_Gt)
-               << Utils::sformat(" %.8e", longitudinal_Gt)
+            ss << Utils::sformat(" %.25e", Gt)
+               << Utils::sformat(" %.25e", bulk_Gt)
+               << Utils::sformat(" %.25e", longitudinal_Gt)
                << std::endl;
         }
     }
