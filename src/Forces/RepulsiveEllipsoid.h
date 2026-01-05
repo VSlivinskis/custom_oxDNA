@@ -11,49 +11,45 @@
 #include "BaseForce.h"
 
 /**
- * @brief External force field that confines particles into an ellipsoid.
+ * @brief External force field that confines particles into a (possibly growing) ellipsoid.
  *
- * example section in the external forces file:
-
- \n
- {\n
- particle = -1    # acts on all particles\n
- type = ellipse \n
- r0 = 7.,7.,7.    # semi-axis    in simulation unit lengths\n
- stiff = 10.      # quite stiff to confine\n
- rate = 0.        # constant radius\n
- center = 0,0,0   # center position\n
- }\n\n
-
- * @verbatim
- stiff = <float> (stiffness of the repulsion.)
- [r0 = <float>,<float>,<float> (semi-axis of the ellipse, in simulation units.)]
- rate = <float> (rate of growth of the radius. Note that the growth is linear in timesteps/MC steps, not reduced time units.)
- particle = <int> (index of the particle on which the force shall be applied. If -1, the force will be exerted on all the particles)
- [center = <float>,<float>,<float> (centre of the sphere, defaults to 0,0,0)]
- @endverbatim
+ * This CPU implementation mirrors the CUDA implementation (CUDA_REPULSIVE_ELLIPSOID):
+ *  - Semi-axes grow uniformly with: growth = 1 + rate * step
+ *  - Ellipsoidal radius r' = sqrt((dx/a)^2 + (dy/b)^2 + (dz/c)^2)
+ *  - WCA repulsion is applied ONLY for r' < 1.0 (purely repulsive, truncated)
+ *
+ * Input (external forces file):
+ *
+ * {
+ *   particle = -1
+ *   type = repulsive_ellipsoid   # or whatever token you map to this class on CPU
+ *   r_2 = ax,ay,az               # base semi-axes at step 0
+ *   stiff = 10.0                 # epsilon
+ *   rate = 0.0                   # linear growth factor per step (dimensionless)
+ *   center = 0,0,0
+ * }
  */
 class RepulsiveEllipsoid: public BaseForce {
 public:
 	/// center of the ellipsoid
 	LR_vector _centre;
 
-	/// outer axes of the ellipsoid: for distances smaller than these values particles will not feel any force
+	/// base semi-axes at step 0
 	LR_vector _r_2;
 
-	/// inner axes: for distances greater than these values particles will not feel any force
+	/// (kept for compatibility; unused)
 	LR_vector _r_1;
 
+	/// linear growth rate (dimensionless per step): growth = 1 + rate * step
 	number _rate;
 
 	RepulsiveEllipsoid();
-	virtual ~RepulsiveEllipsoid() {
-	}
+	virtual ~RepulsiveEllipsoid() {}
 
 	std::tuple<std::vector<int>, std::string> init(input_file &inp) override;
 
-	virtual LR_vector value(llint step, LR_vector &pos);
-	virtual number potential(llint step, LR_vector &pos);
+	LR_vector value(llint step, LR_vector &pos) override;
+	number potential(llint step, LR_vector &pos) override;
 };
 
-#endif // REPULSIVEELLIPSOID
+#endif // REPULSIVEELLIPSOID_H_
