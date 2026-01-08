@@ -103,68 +103,66 @@ LR_vector RepulsiveSphereMoving::center_for_step(llint step) const {
 }
 
 LR_vector RepulsiveSphereMoving::value(llint step, LR_vector &pos) {
-    // Moving center and sphere radius at this step
-    LR_vector c = center_for_step(step);
-    LR_vector dist = CONFIG_INFO->box->min_image(c, pos);
-    number mdist   = dist.module();
-    number radius  = _r0 + _rate * (number) step;
-
-    // Early exits: outside external cut or missing geometry
-    if (mdist <= 0.0 || mdist >= _r_ext) return LR_vector(0., 0., 0.);
-
-    // Surface gap r = distance from the sphere surface to the particle
-    number r = mdist - radius;
-
-    // WCA parameters
-    const number sigma = 1;
-    const number rc    = std::pow(2.0, 1.0/6.0) * sigma; // cutoff at LJ minimum
-
-    // If the particle is farther than rc from the sphere surface, no force
-    if (r >= rc) return LR_vector(0., 0., 0.);
-
-    // Avoid singularities if r <= 0 (particle "inside" the sphere shell)
-    // Clamp to a tiny positive value; direction remains outward (dist)
-    const number r_safe = (r > 1e-9) ? r : 1e-9;
-
-    // WCA = truncated & shifted LJ => Force magnitude (purely repulsive branch)
-    // F(r) = 24*eps * [ 2*(σ^12)/r^13 - (σ^6)/r^7 ], for r < rc; 0 otherwise.
-    const number eps = _stiff;
-    const number s6  = std::pow(sigma, 6);
-    const number s12 = s6 * s6;
-
-    number Fmag = 24.0 * eps * ( 2.0 * s12 / std::pow(r_safe, 13)
-                               -        s6  / std::pow(r_safe, 7 ) );
-
-    // Direction: from center -> particle (outward normal)
-    LR_vector n = dist / mdist;
-    return n * Fmag;
-}
-
-
-number RepulsiveSphereMoving::potential(llint step, LR_vector &pos) {
-    LR_vector c = center_for_step(step);
-    LR_vector dist = CONFIG_INFO->box->min_image(c, pos);
-    number mdist   = dist.module();
-    number radius  = _r0 + _rate * (number) step;
-
-    if (mdist <= 0.0 || mdist >= _r_ext) return 0.0;
+    LR_vector c     = center_for_step(step);
+    LR_vector dist  = CONFIG_INFO->box->min_image(c, pos); // vector from center -> pos (minimum image)
+    number mdist    = dist.module();
+    number radius   = _r0 + _rate * (number)step;
 
     // Surface gap
     number r = mdist - radius;
 
-    const number sigma = 1;
-    const number rc    = std::pow(2.0, 1.0/6.0) * sigma;
+    // Parameters (you can expose sigma/x as inputs later if you want)
+    const number x      = 2;          // "x" in the 2x-x form
+    const number sigma  = 1;
+    const number epsilon = _stiff;    // use your input "stiff" as energy scale
+    const number rc     = std::pow(2.0, 1.0/x) * sigma;
 
+    // Optional extra cutoff (your _r_ext). If you meant it as a max *gap* cutoff:
+    if (r >= _r_ext) return LR_vector(0., 0., 0.);
+
+    // No direction if mdist is 0
+    if (mdist <= 0.0) return LR_vector(0., 0., 0.);
+
+    // WCA off beyond rc
+    if (r >= rc) return LR_vector(0., 0., 0.);
+
+    // Clamp to avoid singularity at r -> 0+
+    const number r_safe = (r > (number)1e-9) ? r : (number)1e-9;
+
+    // dU/dr for: U = 4ε[(σ/r)^(2x) - (σ/r)^x] + ε
+    // Let A = (σ/r)^x. Then U = 4ε(A^2 - A) + ε
+    // dA/dr = -x * (σ^x) * r^(-x-1) = -(x/r) * A
+    // dU/dr = 4ε(2A - 1)dA/dr = 4ε(2A - 1)*(-(x/r)*A)
+    const number A     = std::pow(sigma / r_safe, x);
+    const number dUdr  = 4.0 * epsilon * (2.0 * A - 1.0) * (-(x / r_safe) * A);
+
+    // Force: F = -dU/dr * rhat, where rhat = dist / mdist
+    const number Fmag = -dUdr;
+    return dist * (Fmag / mdist);
+}
+
+number RepulsiveSphereMoving::potential(llint step, LR_vector &pos) {
+    LR_vector c     = center_for_step(step);
+    LR_vector dist  = CONFIG_INFO->box->min_image(c, pos);
+    number mdist    = dist.module();
+    number radius   = _r0 + _rate * (number)step;
+
+    // Surface gap
+    number r = mdist - radius;
+
+    const number x       = 2;
+    const number sigma   = 1;
+    const number epsilon = _stiff;
+    const number rc      = std::pow(2.0, 1.0/x) * sigma;
+
+    if (r >= _r_ext) return 0.0;
+    if (mdist <= 0.0) return 0.0;
     if (r >= rc) return 0.0;
 
-    // Clamp r to avoid singularity at 0
-    const number r_safe = (r > 1e-9) ? r : 1e-9;
+    const number r_safe = (r > (number)1e-9) ? r : (number)1e-9;
 
-    // WCA potential: U(r) = 4ε[(σ/r)^12 - (σ/r)^6] + ε, for r < rc ; 0 otherwise.
-    const number eps = _stiff;
-    const number sr  = sigma / r_safe;
-    const number sr6 = std::pow(sr, 6);
-
-    number U = 4.0 * eps * (sr6*sr6 - sr6) + eps;
+    // U(r) = 4ε[(σ/r)^(2x) - (σ/r)^x] + ε, for r < rc
+    const number A  = std::pow(sigma / r_safe, x);
+    number U = 4.0 * epsilon * (A*A - A) + epsilon;
     return U;
 }

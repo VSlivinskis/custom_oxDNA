@@ -58,120 +58,110 @@ std::tuple<std::vector<int>, std::string> RepulsiveEllipsoid::init(input_file &i
 	return std::make_tuple(particle_ids, desc);
 }
 
-/**
- * CPU mirror of CUDA_REPULSIVE_ELLIPSOID:
- *
- * growth = 1 + rate * step
- * a = a0 * growth, b = b0 * growth, c = c0 * growth
- *
- * r'^2 = (dx/a)^2 + (dy/b)^2 + (dz/c)^2
- * apply WCA only if 0 < r' < 1
- *
- * sigma = 1 / 2^(1/6)
- *
- * pref = 24*eps*(2*s12 - s6) / r'^2
- * Fx = pref * dx / a^2, etc.
- */
 LR_vector RepulsiveEllipsoid::value(llint step, LR_vector &pos) {
-	// Uniform axis growth, identical to CUDA
-	const number growth = (number)1.0 + _rate * (number)step;
-	if(growth <= (number)0.0) return LR_vector(0., 0., 0.);
+    // Uniform axis growth
+    const number growth = (number)1.0 + _rate * (number)step;
+    if(growth <= (number)0.0) return LR_vector(0., 0., 0.);
 
-	const number ax = _r_2.x * growth;
-	const number ay = _r_2.y * growth;
-	const number az = _r_2.z * growth;
+    const number ax = _r_2.x * growth;
+    const number ay = _r_2.y * growth;
+    const number az = _r_2.z * growth;
 
-	// Guard against degenerate axes
-	if(ax <= (number)0.0 || ay <= (number)0.0 || az <= (number)0.0) return LR_vector(0., 0., 0.);
+    if(ax <= (number)0.0 || ay <= (number)0.0 || az <= (number)0.0) return LR_vector(0., 0., 0.);
 
-	// Minimum-image displacement from centre to particle (same ordering as CUDA: minimum_image(centre, ppos))
-	LR_vector dist = CONFIG_INFO->box->min_image(_centre, pos);
+    // Minimum-image displacement from centre to particle
+    LR_vector dist = CONFIG_INFO->box->min_image(_centre, pos);
 
-	const number inv_ax2 = (number)1.0 / (ax * ax);
-	const number inv_ay2 = (number)1.0 / (ay * ay);
-	const number inv_az2 = (number)1.0 / (az * az);
+    const number dx = dist.x;
+    const number dy = dist.y;
+    const number dz = dist.z;
 
-	const number dx = dist.x;
-	const number dy = dist.y;
-	const number dz = dist.z;
+    const number inv_ax2 = (number)1.0 / (ax * ax);
+    const number inv_ay2 = (number)1.0 / (ay * ay);
+    const number inv_az2 = (number)1.0 / (az * az);
 
-	// r'^2 in ellipsoidal metric
-	const number rp2 = dx*dx*inv_ax2 + dy*dy*inv_ay2 + dz*dz*inv_az2;
-	if(rp2 <= (number)0.0) return LR_vector(0., 0., 0.);
+    // Ellipsoidal metric r'^2
+    const number rp2 = dx*dx*inv_ax2 + dy*dy*inv_ay2 + dz*dz*inv_az2;
+    if(rp2 <= (number)0.0) return LR_vector(0., 0., 0.);
 
-	const number rp = sqrt(rp2);
+    const number rp = sqrt(rp2);
+    if(rp <= (number)0.0) return LR_vector(0., 0., 0.);
 
-	// CUDA cutoff: r' must be < 1.0
-	const number Rc_d = (number)1.0;
-	if(rp <= (number)0.0 || rp >= Rc_d) return LR_vector(0., 0., 0.);
+    // --- WCA in r' ---
+    const number x        = (number)2;         // same as your moving sphere default
+    const number sigma    = (number)1;         // same as moving sphere default
+    const number epsilon  = _stiff;
 
-	// sigma = Rc_d / 2^(1/6) = 1 / 2^(1/6)
-	static const number two_to_1_over_6 = pow((number)2.0, (number)(1.0/6.0));
-	const number sigma = Rc_d / two_to_1_over_6;
+    // cutoff in r' (WCA cutoff)
+    const number rc = pow((number)2.0, (number)(1.0/x)) * sigma;
 
-	const number inv_rp    = (number)1.0 / rp;
-	const number s_over_rp = sigma * inv_rp;
+    // If you want the same "only inside r'<1" behavior as your CUDA mirror, clamp cutoff:
+    // const number rc = (number)1.0;
 
-	const number s2  = s_over_rp * s_over_rp;
-	const number s4  = s2 * s2;
-	const number s6  = s4 * s2;
-	const number s12 = s6 * s6;
+    if(rp >= rc) return LR_vector(0., 0., 0.);
 
-	const number eps = _stiff;
+    // Clamp rp to avoid blowup at rp->0
+    const number rp_safe = (rp > (number)1e-9) ? rp : (number)1e-9;
 
-	// pref = 24*eps*(2*s12 - s6) / r'^2
-	const number pref = (number)24.0 * eps * ((number)2.0 * s12 - s6) / rp2;
+    // U(r') = 4ε[(σ/r')^(2x) - (σ/r')^x] + ε  for r'<rc
+    // Let A = (σ/r')^x
+    const number A = pow(sigma / rp_safe, x);
 
-	// Chain-rule back to unscaled coordinates (identical to CUDA)
-	const number Fx = pref * dx * inv_ax2;
-	const number Fy = pref * dy * inv_ay2;
-	const number Fz = pref * dz * inv_az2;
+    // dU/dr' = 4ε(2A - 1) dA/dr' , dA/dr' = -(x/r') A
+    const number dUdrp = (number)4.0 * epsilon * ((number)2.0 * A - (number)1.0) * (-(x / rp_safe) * A);
 
-	return LR_vector(Fx, Fy, Fz);
+    // Force: F = -dU/dr' * grad(r')
+    // grad(r') = (1/r') * (dx/a^2, dy/b^2, dz/c^2)
+    const number scale = (-dUdrp) / rp_safe;
+
+    const number Fx = scale * dx * inv_ax2;
+    const number Fy = scale * dy * inv_ay2;
+    const number Fz = scale * dz * inv_az2;
+
+    return LR_vector(Fx, Fy, Fz);
 }
 
 number RepulsiveEllipsoid::potential(llint step, LR_vector &pos) {
-	const number growth = (number)1.0 + _rate * (number)step;
-	if(growth <= (number)0.0) return (number)0.0;
+    const number growth = (number)1.0 + _rate * (number)step;
+    if(growth <= (number)0.0) return (number)0.0;
 
-	const number ax = _r_2.x * growth;
-	const number ay = _r_2.y * growth;
-	const number az = _r_2.z * growth;
+    const number ax = _r_2.x * growth;
+    const number ay = _r_2.y * growth;
+    const number az = _r_2.z * growth;
 
-	if(ax <= (number)0.0 || ay <= (number)0.0 || az <= (number)0.0) return (number)0.0;
+    if(ax <= (number)0.0 || ay <= (number)0.0 || az <= (number)0.0) return (number)0.0;
 
-	LR_vector dist = CONFIG_INFO->box->min_image(_centre, pos);
+    LR_vector dist = CONFIG_INFO->box->min_image(_centre, pos);
 
-	const number inv_ax2 = (number)1.0 / (ax * ax);
-	const number inv_ay2 = (number)1.0 / (ay * ay);
-	const number inv_az2 = (number)1.0 / (az * az);
+    const number dx = dist.x;
+    const number dy = dist.y;
+    const number dz = dist.z;
 
-	const number dx = dist.x;
-	const number dy = dist.y;
-	const number dz = dist.z;
+    const number inv_ax2 = (number)1.0 / (ax * ax);
+    const number inv_ay2 = (number)1.0 / (ay * ay);
+    const number inv_az2 = (number)1.0 / (az * az);
 
-	const number rp2 = dx*dx*inv_ax2 + dy*dy*inv_ay2 + dz*dz*inv_az2;
-	if(rp2 <= (number)0.0) return (number)0.0;
+    const number rp2 = dx*dx*inv_ax2 + dy*dy*inv_ay2 + dz*dz*inv_az2;
+    if(rp2 <= (number)0.0) return (number)0.0;
 
-	const number rp = sqrt(rp2);
+    const number rp = sqrt(rp2);
+    if(rp <= (number)0.0) return (number)0.0;
 
-	const number Rc_d = (number)1.0;
-	if(rp <= (number)0.0 || rp >= Rc_d) return (number)0.0;
+    // --- WCA in r' ---
+    const number x        = (number)2;
+    const number sigma    = (number)1;
+    const number epsilon  = _stiff;
 
-	static const number two_to_1_over_6 = pow((number)2.0, (number)(1.0/6.0));
-	const number sigma = Rc_d / two_to_1_over_6;
+    const number rc = pow((number)2.0, (number)(1.0/x)) * sigma;
 
-	const number inv_rp    = (number)1.0 / rp;
-	const number s_over_rp = sigma * inv_rp;
+    // If you want the same "only inside r'<1" behavior as your CUDA mirror, clamp cutoff:
+    // const number rc = (number)1.0;
 
-	const number s2  = s_over_rp * s_over_rp;
-	const number s4  = s2 * s2;
-	const number s6  = s4 * s2;
-	const number s12 = s6 * s6;
+    if(rp >= rc) return (number)0.0;
 
-	const number eps = _stiff;
+    const number rp_safe = (rp > (number)1e-9) ? rp : (number)1e-9;
 
-	// WCA potential shift (+eps) exactly like your CPU code and standard WCA
-	const number U = (number)4.0 * eps * (s12 - s6) + eps;
-	return U;
+    const number A = pow(sigma / rp_safe, x);
+    const number U = (number)4.0 * epsilon * (A*A - A) + epsilon;
+    return U;
 }
