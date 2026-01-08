@@ -146,6 +146,21 @@ public:
 
 	StressTensor stress_tensor() const;
 
+	/**
+	 * @brief Compute a virial-style stress tensor for an arbitrary subset of particles.
+	 *
+	 * This is intended for observables like StressInBox. It uses the already-computed total force
+	 * stored on each particle (p->force) and an origin/reference point for positions.
+	 *
+	 * The returned tensor is NORMALISED by the provided volume.
+	 * Component order matches the rest of oxDNA: [0]=xx, [1]=yy, [2]=zz, [3]=xy, [4]=xz, [5]=yz.
+	 */
+	StressTensor stress_tensor_subset(const std::vector<BaseParticle *>& subset,
+                                 const LR_vector& reference_point,
+                                 number volume,
+                                 bool use_min_image = true,
+                                 bool include_kinetic = false) const;
+
 	void set_stress_tensor(StressTensor st) {
 		_stress_tensor = st;
 	}

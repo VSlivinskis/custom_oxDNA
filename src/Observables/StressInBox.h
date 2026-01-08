@@ -5,6 +5,7 @@
 
 #include <fstream>
 #include <string>
+#include <vector>
 
 class StressInBox : public BaseObservable {
 public:

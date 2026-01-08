@@ -8,6 +8,8 @@
 // Important: use relative includes from src/Observables
 #include "../Boxes/BaseBox.h"
 #include "../Particles/BaseParticle.h"
+// For subset stress helper
+#include "../Interactions/BaseInteraction.h"
 
 StressInBox::StressInBox() : BaseObservable() {}
 
@@ -96,6 +98,11 @@ void StressInBox::update_data(llint curr_step) {
 
     int dumped = 0;
 
+    // Build the subset once and compute the stress using BaseInteraction.
+    // We still compute diagnostics in the same loop to help identify cancellation.
+    std::vector<BaseParticle *> subset;
+    subset.reserve(N);
+
     for(int i = 0; i < N; i++) {
         BaseParticle *p = parts[i];
 
@@ -120,10 +127,7 @@ void StressInBox::update_data(llint curr_step) {
         dr_abs_sum += dr_abs;
         if(dr_abs > dr_abs_max) dr_abs_max = dr_abs;
 
-        // Your current estimator: dr ⊗ F  (not true virial; debug is to diagnose cancellation)
-        xx += dr.x * F.x;  xy += dr.x * F.y;  xz += dr.x * F.z;
-        yx += dr.y * F.x;  yy += dr.y * F.y;  yz += dr.y * F.z;
-        zx += dr.z * F.x;  zy += dr.z * F.y;  zz += dr.z * F.z;
+        subset.push_back(p);
 
         // cancellation-proof magnitude
         virial_abs_sum += std::fabs(dr.x*F.x) + std::fabs(dr.x*F.y) + std::fabs(dr.x*F.z)
@@ -145,10 +149,38 @@ void StressInBox::update_data(llint curr_step) {
         }
     }
 
-    const double invV = 1.0 / _Vbox;
-    xx *= invV; yy *= invV; zz *= invV;
-    xy *= invV; xz *= invV; yz *= invV;
-    yx *= invV; zx *= invV; zy *= invV;
+    // Compute the tensor.
+    // If the box contains ALL particles, match StressAutocorrelation exactly by using
+    // compute_standard_stress_tensor()/stress_tensor(). Otherwise, fall back to the
+    // subset estimator (virial from total forces, normalised by Vbox).
+    if(_config_info->interaction != NULL) {
+        const int N_total = (int) parts.size();
+        if(n_in == N_total) {
+            if(!_config_info->interaction->has_custom_stress_tensor()) {
+                _config_info->interaction->compute_standard_stress_tensor();
+            }
+            StressTensor st = _config_info->interaction->stress_tensor();
+            xx = st[0];
+            yy = st[1];
+            zz = st[2];
+            xy = st[3];
+            xz = st[4];
+            yz = st[5];
+        } else {
+            StressTensor st = _config_info->interaction->stress_tensor_subset(
+                subset, _center, (number) _Vbox, true /* use_min_image */, false /* include_kinetic */
+            );
+            xx = st[0];
+            yy = st[1];
+            zz = st[2];
+            xy = st[3];
+            xz = st[4];
+            yz = st[5];
+        }
+        yx = xy;
+        zx = xz;
+        zy = yz;
+    }
 
     if(_debug && _dbg.is_open()) {
         _dbg << curr_step << " " << n_in << " "

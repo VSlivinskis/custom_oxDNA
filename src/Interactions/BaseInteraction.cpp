@@ -203,12 +203,61 @@ void BaseInteraction::reset_stress_tensor() {
 }
 
 StressTensor BaseInteraction::stress_tensor() const {
-	StressTensor norm_st(_stress_tensor);
-	for(auto &v : norm_st) {
-		v /= CONFIG_INFO->box->V();
-	}
+    StressTensor norm_st(_stress_tensor);
+    for(auto &v : norm_st) {
+        v /= CONFIG_INFO->box->V();
+    }
+    return norm_st;
+}  // <-- THIS brace must be here, before the next function starts
 
-	return norm_st;
+
+StressTensor BaseInteraction::stress_tensor_subset(const std::vector<BaseParticle *>& subset,
+                                                  const LR_vector& reference_point,
+                                                  number volume,
+                                                  bool use_min_image,
+                                                  bool include_kinetic) const
+	{
+    StressTensor st = {0., 0., 0., 0., 0., 0.};
+
+    if(volume <= (number)0.) return st;
+
+    BaseBox *box = CONFIG_INFO->box;
+
+    for(const auto *p : subset) {
+        // Position relative to reference point
+        LR_vector dr;
+        if(use_min_image && box != NULL) {
+            dr = box->min_image(p->pos, reference_point);
+        } else {
+            dr = p->pos - reference_point;
+        }
+
+        // Total force already computed on particle
+        const LR_vector &F = p->force;
+
+        // Virial part. Sign chosen to match the convention used in compute_standard_stress_tensor()
+        // (which accumulates - r_ij \otimes F_ij).
+        st[0] -= dr.x * F.x;
+        st[1] -= dr.y * F.y;
+        st[2] -= dr.z * F.z;
+        st[3] -= dr.x * F.y;
+        st[4] -= dr.x * F.z;
+        st[5] -= dr.y * F.z;
+
+        if(include_kinetic) {
+            const LR_vector &v = p->vel;
+            st[0] += SQR(v.x);
+            st[1] += SQR(v.y);
+            st[2] += SQR(v.z);
+            st[3] += v.x * v.y;
+            st[4] += v.x * v.z;
+            st[5] += v.y * v.z;
+        }
+    }
+
+    // Normalise by volume
+    for(auto &x : st) x /= volume;
+    return st;
 }
 
 number BaseInteraction::get_system_energy(std::vector<BaseParticle *> &particles, BaseList *lists) {
