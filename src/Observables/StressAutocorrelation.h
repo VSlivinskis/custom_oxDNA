@@ -189,6 +189,17 @@ protected:
 
     std::shared_ptr<Level> _deserialise(std::string filename);
 
+	// =========================
+	// NEW: cylindrical tensor dumping
+	// =========================
+	bool _dump_tensor_cyl = false;
+	std::string _tensor_cyl_filename = "stress_tensor_cyl_3x3.dat";
+	std::ofstream _tensor_cyl_out;
+
+	// origin for cylindrical transform (point on tube axis)
+	bool _cyl_origin_set = false;
+	LR_vector _cyl_origin = LR_vector(0., 0., 0.);
+
 public:
     StressAutocorrelation();
     virtual ~StressAutocorrelation();

@@ -161,6 +161,21 @@ public:
                                  bool use_min_image = true,
                                  bool include_kinetic = false) const;
 
+	/**
+	 * Cylindrical (r,theta,z) virial stress for a subset, about the z-axis.
+	 *
+	 * Returns components in the same 6-entry layout:
+	 * [0]=rr, [1]=tt (hoop), [2]=zz, [3]=rt, [4]=rz, [5]=tz
+	 *
+	 * reference_point should lie on the tube axis (typically tube center in x/y).
+	 */
+	StressTensor stress_tensor_subset_cylindrical(const std::vector<BaseParticle *>& subset,
+												const LR_vector& reference_point,
+												number volume,
+												bool use_min_image = true,
+												bool include_kinetic = false) const;
+
+
 	void set_stress_tensor(StressTensor st) {
 		_stress_tensor = st;
 	}

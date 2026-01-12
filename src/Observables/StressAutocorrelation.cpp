@@ -15,6 +15,7 @@ StressAutocorrelation::~StressAutocorrelation() {
     if(_tensor_out.is_open()) {
         _tensor_out.close();
     }
+    if(_tensor_cyl_out.is_open()) _tensor_cyl_out.close();
 }
 
 void StressAutocorrelation::serialise() {
@@ -80,6 +81,18 @@ void StressAutocorrelation::get_settings(input_file &my_inp, input_file &sim_inp
     getInputBool(&my_inp, "dump_tensor", &_dump_tensor, 0);
     getInputString(&my_inp, "tensor_file", _tensor_filename, 0);
 
+    getInputBool(&my_inp, "dump_tensor_cyl", &_dump_tensor_cyl, 0);
+    getInputString(&my_inp, "tensor_cyl_file", _tensor_cyl_filename, 0);
+
+    // Optional origin (if not provided, default to box center in x/y during init)
+    double ox, oy, oz;
+    if(getInputDouble(&my_inp, "cyl_origin_x", &ox, 0) == KEY_FOUND &&
+    getInputDouble(&my_inp, "cyl_origin_y", &oy, 0) == KEY_FOUND) {
+        getInputDouble(&my_inp, "cyl_origin_z", &oz, 0); // optional
+        _cyl_origin = LR_vector(ox, oy, oz);
+        _cyl_origin_set = true;
+    }
+
     OX_LOG(Logger::LOG_INFO,
         "Initialising a StressAutocorrelation obs with m = %d, p = %d, anisotropic = %d, dump_tensor = %d (%s)",
         _m, _p, _anisotropic, _dump_tensor, _tensor_filename.c_str()
@@ -134,10 +147,33 @@ void StressAutocorrelation::init() {
 
         if(write_header) {
             _tensor_out
-                << "# step  "
+                << "step  "
                 << "xx xy xz  "
                 << "yx yy yz  "
                 << "zx zy zz"
+                << std::endl;
+        }
+    }
+    if(_dump_tensor_cyl) {
+        // Default origin: box center in x/y if not provided
+        if(!_cyl_origin_set) {
+            LR_vector sides = _config_info->box->box_sides();
+            _cyl_origin = LR_vector(0.5*sides.x, 0.5*sides.y, 0.0);
+        }
+
+        const bool write_header = !_file_has_content(_tensor_cyl_filename);
+        _tensor_cyl_out.open(_tensor_cyl_filename, std::ios::out | std::ios::app);
+        if(!_tensor_cyl_out.good()) {
+            throw oxDNAException("StressAutocorrelation: cannot open tensor_cyl_file '%s' for appending",
+                                _tensor_cyl_filename.c_str());
+        }
+
+        if(write_header) {
+            _tensor_cyl_out
+                << "# step  "
+                << "rr rt rz  "
+                << "tr tt tz  "
+                << "zr zt zz"
                 << std::endl;
         }
     }
@@ -165,6 +201,33 @@ void StressAutocorrelation::update_data(llint curr_step) {
     const double xy = stress_tensor[3];
     const double xz = stress_tensor[4];
     const double yz = stress_tensor[5];
+
+    if(_dump_tensor_cyl && _tensor_cyl_out.is_open()) {
+        // Subset = all particles
+        const auto &particles = CONFIG_INFO->particles();
+
+        StressTensor st_cyl = _config_info->interaction->stress_tensor_subset_cylindrical(
+            particles,
+            _cyl_origin,
+            _config_info->box->V(),
+            true,   // use_min_image
+            false   // include_kinetic (match your other dumps)
+        );
+
+        const double rr = st_cyl[0];
+        const double tt = st_cyl[1]; // hoop
+        const double zz2 = st_cyl[2];
+        const double rt = st_cyl[3];
+        const double rz = st_cyl[4];
+        const double tz = st_cyl[5];
+
+        _tensor_cyl_out << curr_step << "  "
+                        << rr << " " << rt << " " << rz << "  "
+                        << rt << " " << tt << " " << tz << "  "
+                        << rz << " " << tz << " " << zz2
+                        << "\n";
+        _tensor_cyl_out.flush();
+    }
 
     // =========================
     // NEW: dump full 3x3 tensor each update (append-only)

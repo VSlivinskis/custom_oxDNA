@@ -63,7 +63,7 @@ void StressInBox::init() {
         _dbg << std::setprecision(16);
 
         if (empty) {
-            _dbg << "# step n_in "
+            _dbg << "step n_in "
                  << "Fsum_abs Fmax_abs nFpos "
                  << "dr_abs_sum dr_abs_max "
                  << "virial_abs_sum "
