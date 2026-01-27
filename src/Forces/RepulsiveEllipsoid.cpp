@@ -162,6 +162,6 @@ number RepulsiveEllipsoid::potential(llint step, LR_vector &pos) {
     const number rp_safe = (rp > (number)1e-9) ? rp : (number)1e-9;
 
     const number A = pow(sigma / rp_safe, x);
-    const number U = (number)4.0 * epsilon * (A*A - A) + epsilon;
+    const number U = (number)4.0 * epsilon * (A*A - A) + A*sigma;
     return U;
 }
