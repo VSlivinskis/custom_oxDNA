@@ -1,7 +1,7 @@
 /**
  * @file    ConstantTrap.h
  * @date    18/oct/2014
- * @author  Flavio 
+ * @author  Flavio
  *
  */
 
@@ -12,9 +12,24 @@
 
 class BaseParticle;
 
+/**
+ * ConstantTrap
+ *
+ * Applies a constant-magnitude force along the line connecting the target particle to a reference.
+ *
+ * Original behavior: reference is another particle (ref_particle).
+ * Extended behavior: if ref_particle = -1, use a fixed reference point in space given by
+ *   center_x, center_y, center_z
+ *
+ * The force magnitude is |_stiff| and its sign is determined by (r - r0):
+ *   - if r > r0, force points toward the reference
+ *   - if r < r0, force points away from the reference
+ */
 class ConstantTrap: public BaseForce {
 private:
 	int _ref_id;
+	bool _use_fixed_point;
+	LR_vector _ref_pos;
 
 public:
 	BaseParticle *_p_ptr;

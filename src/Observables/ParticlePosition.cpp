@@ -51,7 +51,7 @@ std::string ParticlePosition::get_output_string(llint curr_step) {
 
 	if(_orientation) {
 		LR_matrix oT = _config_info->particles()[_particle_id]->orientation.get_transpose();
-		result = Utils::sformat("%s %10.6lf %10.6lf %10.6lf %10.6lf %10.6lf %10.6lf ", result.c_str(), oT.v1.x, oT.v1.y, oT.v1.z, oT.v3.x, oT.v3.y, oT.v3.z);
+		result = Utils::sformat("%s %10.14lf %10.14lf %10.14lf %10.14lf %10.14lf %10.14lf ", result.c_str(), oT.v1.x, oT.v1.y, oT.v1.z, oT.v3.x, oT.v3.y, oT.v3.z);
 	}
 
 	return result;
