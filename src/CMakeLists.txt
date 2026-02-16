@@ -171,6 +171,7 @@ SET(forces_SOURCES
 	Forces/Metadynamics/meta_utils.cpp
 	Forces/AttractionPlane.cpp
 	Forces/AFMMovingSphere.cpp
+	Forces/RepulsiveKeplerPoinsot.cpp
 
 )
 
